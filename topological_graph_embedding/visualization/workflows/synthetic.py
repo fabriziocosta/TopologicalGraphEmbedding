@@ -1,4 +1,4 @@
-"""Reusable plotting and widget helpers for the synthetic-distribution notebook."""
+"""Synthetic route-embedding visualization workflow."""
 
 from pathlib import Path
 
@@ -238,3 +238,4 @@ def display_interactive_controls(datasets):
     # invoke the same render path a second time.
     refit_selected_dataset()
     fit_button.on_click(refit_selected_dataset)
+

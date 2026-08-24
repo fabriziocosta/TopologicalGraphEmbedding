@@ -2,8 +2,8 @@
 
 `visualize_synthetic_distributions.ipynb` runs the model on all seven 2D
 synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
-wrapper around `synthetic_distributions.py`: edit its parameters and rerun the
-function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
+wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
+edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
 (default `4`) and is displayed through a 2D PCA projection.
 
 The final notebook cell calls the reusable `ipywidgets` panel for selecting a
