@@ -46,10 +46,12 @@ jupyter notebook notebooks/visualize_synthetic_distributions.ipynb
 
 The notebook saves rendered figures under `notebooks/figures/` when executed.
 
-Shared plotting logic for these notebooks lives in
-`notebooks/spline_visualization.py`, including the reusable `plot_embedding_row`
-four-panel renderer. The metro-map point panel hides junction and endpoint
-markers by default; pass `show_metro_nodes=True` to display them.
+Shared plotting logic is part of the installed package under
+`topological_graph_embedding.visualization`: `plots.py` contains the reusable
+`plot_embedding_row` four-panel renderer, `metro.py` contains the schematic
+layout, and `interactive.py` contains the Plotly view. The metro-map point
+panel hides junction and endpoint markers by default; pass
+`show_metro_nodes=True` to display them.
 
 The notebooks import the installed `topological_graph_embedding` package. The
 notebook bootstrap adds the repository root to the import path for local

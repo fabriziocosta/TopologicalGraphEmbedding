@@ -10,12 +10,8 @@ from sklearn.datasets import (
     load_digits,
     load_wine,
 )
-if __package__:
-    from .dimensionality_reduction import fit_reducer
-    from .spline_visualization import evaluate_route_target, plot_embedding_row
-else:
-    from notebooks.dimensionality_reduction import fit_reducer
-    from notebooks.spline_visualization import evaluate_route_target, plot_embedding_row
+from topological_graph_embedding.visualization.reduction import fit_reducer
+from topological_graph_embedding.visualization.plots import evaluate_route_target, plot_embedding_row
 from topological_graph_embedding import SplineGraphEmbedding
 
 

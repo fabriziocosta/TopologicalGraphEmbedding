@@ -6,10 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.decomposition import PCA
 
-if __package__:
-    from .spline_visualization import plot_embedding_row
-else:
-    from notebooks.spline_visualization import plot_embedding_row
+from topological_graph_embedding.visualization.plots import plot_embedding_row
 from topological_graph_embedding.datasets import generate_synthetic_datasets, noisy_hypercube
 from topological_graph_embedding import SplineGraphEmbedding
 
@@ -60,7 +57,7 @@ def fit_datasets(
             'junctions': len(model.junctions_),
             'endpoints': len(model.endpoints_),
             'spline_chains': len(model.routes_),
-            'median_residual': float(np.median(projections[name]['residual_norm'])),
+            'median_residual': float(np.median(projections[name].residual_norm)),
         })
     return models, projections, summary
 

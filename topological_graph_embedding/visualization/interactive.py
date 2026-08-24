@@ -76,8 +76,8 @@ def plot_spline_3d(
     residual_norm = np.asarray(result.residual_norm, dtype=float)
     count = len(values)
 
-    route_colors = route_colors(model) if colors is None else np.asarray(colors)
-    if len(route_colors) < len(model.routes_):
+    colors_by_route = route_colors(model) if colors is None else np.asarray(colors)
+    if len(colors_by_route) < len(model.routes_):
         raise ValueError("colors must contain at least one color per spline")
 
     figure = go.Figure()
@@ -124,7 +124,7 @@ def plot_spline_3d(
                 mode="lines",
                 name=f"spline {route}",
                 legendgroup=f"spline-{route}",
-                line=dict(color=_plotly_color(route_colors[route]), width=6),
+                line=dict(color=_plotly_color(colors_by_route[route]), width=6),
                 hoverinfo="name",
             )
         )
@@ -173,4 +173,3 @@ def plot_spline_3d(
 
 
 __all__ = ["plot_spline_3d"]
-

@@ -309,51 +309,17 @@ class SplineGraphEmbedding:
         max_projection_lines: int = 150,
         title: str | None = None,
     ) -> Any:
-        """Plot a fitted 2D graph and optionally return the Matplotlib axes."""
-        if not self._fitted:
-            raise RuntimeError("Call fit before plot_network")
-        if self.n_features_in_ != 2:
-            raise ValueError("plot_network is only available for two-dimensional data")
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError as exc:  # pragma: no cover - depends on environment.
-            raise ImportError("plot requires matplotlib") from exc
-        if ax is None:
-            _, ax = plt.subplots(figsize=(7, 6))
-        data = self._original_X_ if X is None else _as_point_cloud(X)
-        ax.scatter(data[:, 0], data[:, 1], s=10, alpha=0.22, color="tab:blue", label="observations")
-        for index, spline in enumerate(self.routes_):
-            curve = spline.samples * self.scale_ + self.mean_
-            if spline.closed:
-                curve = np.vstack([curve, curve[0]])
-            ax.plot(curve[:, 0], curve[:, 1], linewidth=2.8, label="spline" if index == 0 else None)
-        junctions = np.asarray([self.landmark_graph_.nodes[node] for node in self.junctions_])
-        endpoints = np.asarray([self.landmark_graph_.nodes[node] for node in self.endpoints_])
-        if len(junctions):
-            junctions = junctions * self.scale_ + self.mean_
-            ax.scatter(junctions[:, 0], junctions[:, 1], s=70, color="tab:red", zorder=5, label="junction")
-        if len(endpoints):
-            endpoints = endpoints * self.scale_ + self.mean_
-            ax.scatter(endpoints[:, 0], endpoints[:, 1], s=65, marker="s", color="tab:orange", zorder=5, label="endpoint")
-        if show_projections:
-            result = self.transform(data)
-            count = min(max_projection_lines, len(data))
-            indices = np.linspace(0, len(data) - 1, count, dtype=int)
-            for index in indices:
-                ax.plot(
-                    [data[index, 0], result.projected[index, 0]],
-                    [data[index, 1], result.projected[index, 1]],
-                    color="0.35",
-                    linewidth=0.35,
-                    alpha=0.35,
-                )
-        ax.set_aspect("equal", adjustable="datalim")
-        ax.set_xlabel("feature 1")
-        ax.set_ylabel("feature 2")
-        if title:
-            ax.set_title(title)
-        ax.legend(loc="best", fontsize=8)
-        return ax
+        """Plot the fitted route network using the visualization package."""
+        from .visualization.network import plot_network
+
+        return plot_network(
+            self,
+            X=X,
+            ax=ax,
+            show_projections=show_projections,
+            max_projection_lines=max_projection_lines,
+            title=title,
+        )
 
 
 __all__ = ["SplineGraphEmbedding"]
