@@ -20,29 +20,29 @@ backends are unavailable.
 
 Let
 
-\[
+$$
 X = \{x_1,\ldots,x_n\}, \qquad x_i \in \mathbb{R}^d
-\]
+$$
 
 be observations sampled around an unknown one-dimensional structure. The
 structure may contain endpoints, junctions, open routes, and closed loops. We
 seek a small route network
 
-\[
+$$
 \Gamma = \{\gamma_r : [0,1] \rightarrow \mathbb{R}^d\}_{r=1}^R
-\]
+$$
 
 such that every observation has a nearest route coordinate
 
-\[
+$$
 (r_i, u_i) = \arg\min_{r,u}\|x_i - \gamma_r(u)\|_2.
-\]
+$$
 
 The public result for an observation contains:
 
-\[
+$$
 (r_i, u_i, \hat{x}_i, e_i, \|e_i\|_2, v_i),
-\]
+$$
 
 where `route_id` is the route index, `position` is the longitudinal
 coordinate, `projected` is \(\hat{x}_i\), `residual` is
@@ -94,8 +94,8 @@ topological shortcuts to local landmark neighborhoods and avoids the dense
 all-pairs shortcut heuristic used by the prototype.
 
 Persistent homology supplies the target. Ripser is used when available;
-otherwise a NumPy Vietoris–Rips H1 fallback is used. Both backend selection and
-unexpected Ripser failures are recorded and warned about.
+otherwise a NumPy Vietoris–Rips H1 fallback is used. Backend selection and
+unexpected Ripser failures are recorded; unexpected failures are warned about.
 
 After fitting, topology diagnostics are available as:
 

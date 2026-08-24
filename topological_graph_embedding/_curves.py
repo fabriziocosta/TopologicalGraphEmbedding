@@ -188,7 +188,12 @@ def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int)
 
     tck = None
     backend = "numpy"
-    if splprep is not None and len(points) >= 3:
+    # FITPACK's parametric spline implementation supports at most ten
+    # coordinate dimensions.  High-dimensional embeddings intentionally use
+    # the deterministic NumPy fallback without producing one warning per
+    # route.
+    scipy_supported_dimension = points.shape[1] < 11
+    if splprep is not None and len(points) >= 3 and scipy_supported_dimension:
         degree = min(3, len(points) - 1)
         smoothing_factor = max(0.0, float(smoothing)) * len(points)
         for _ in range(8):

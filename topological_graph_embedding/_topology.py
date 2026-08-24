@@ -524,13 +524,10 @@ def _estimate_persistence(
 ) -> tuple[Array, str]:
     try:
         from ripser import ripser  # type: ignore
-    except ImportError as exc:
-        warnings.warn(
-            "Ripser is unavailable; using the NumPy persistent-homology fallback: "
-            f"{exc}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    except ImportError:
+        # Ripser is optional.  The selected backend is exposed on the fitted
+        # estimator, so an unavailable optional dependency does not need to
+        # interrupt normal fitting with a warning.
         return (
             _rips_h1_persistence(X, max_points=max_points, random_state=random_state),
             "numpy",

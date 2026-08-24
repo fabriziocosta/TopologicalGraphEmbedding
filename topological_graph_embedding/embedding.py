@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from ._curves import _SCIPY_IMPORT_ERROR, _fit_curve
+from ._curves import _fit_curve
 from ._frames import (
     _fit_normal_frame_grid,
     _normal_coordinates,
@@ -193,13 +193,6 @@ class SplineGraphEmbedding:
             for chain in self.route_chains_
         ]
         self._anchor_closed_junctions()
-        if _SCIPY_IMPORT_ERROR is not None:
-            warnings.warn(
-                "SciPy is unavailable; spline routes use the NumPy fallback: "
-                f"{_SCIPY_IMPORT_ERROR}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
         self.route_backends_ = [spline.backend for spline in self.routes_]
         self.normal_frame_grids_ = [
             _fit_normal_frame_grid(spline) for spline in self.routes_
