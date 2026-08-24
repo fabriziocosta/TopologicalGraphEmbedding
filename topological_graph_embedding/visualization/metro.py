@@ -103,6 +103,7 @@ class MetroLayout:
         self.route_paths_ = self._clip_routes_at_junctions(self.route_paths_)
         self.residual_scale_ = self._set_residual_scale(result)
         self._fit_residual_axes(result)
+        self._fit_residual_log_scales(result)
         self._fitted = True
         return self
 
@@ -1141,6 +1142,69 @@ class MetroLayout:
         vector = np.asarray(result.residual, dtype=float)
         return np.linalg.norm(vector / self.model.scale_, axis=1)
 
+    def _fit_residual_log_scales(self, result: Any | None) -> None:
+        """Fit robust symmetric-log scales for displayed residual scores."""
+        self.residual_log_references_: dict[int, np.ndarray] = {}
+        self.residual_log_scales_: dict[int, np.ndarray] = {}
+        if result is None or not self.residual_plane_axes_:
+            return
+
+        vectors = np.asarray(result.residual, dtype=float) / self.model.scale_
+        route_ids = np.asarray(result.route_id, dtype=int)
+        values = np.asarray(result.position, dtype=float)
+        target_width = self.residual_width * self.reference_length_
+        display_scale = target_width / np.log1p(1.0)
+
+        for route in range(len(self.model.routes_)):
+            member_indices = np.flatnonzero(route_ids == route)
+            if not len(member_indices):
+                continue
+            scores = self._residual_plane_axes_for(
+                route, values[member_indices],
+            )
+            if scores is None:
+                continue
+            scores = np.einsum(
+                "nd,nkd->nk", vectors[member_indices], scores, optimize=True,
+            )
+            references: list[float] = []
+            for component in range(scores.shape[1]):
+                finite = np.abs(scores[:, component])
+                finite = finite[np.isfinite(finite)]
+                if not len(finite) or np.max(finite) <= 1e-12:
+                    references.append(1.0)
+                    continue
+                references.append(
+                    max(float(np.quantile(finite, self.residual_quantile)), 1e-12)
+                )
+            self.residual_log_references_[route] = np.asarray(references, dtype=float)
+            self.residual_log_scales_[route] = np.full(
+                len(references), display_scale, dtype=float,
+            )
+
+    def _log_scaled_residual_scores(
+        self, route: int, scores: np.ndarray,
+    ) -> np.ndarray:
+        """Map signed residual scores to schematic distances without clipping."""
+        values = np.asarray(scores, dtype=float)
+        references = self.residual_log_references_.get(route)
+        scales = self.residual_log_scales_.get(route)
+        if references is None or scales is None:
+            count = 1 if values.ndim == 1 else values.shape[-1]
+            references = np.ones(count, dtype=float)
+            scales = np.full(count, self.residual_scale_, dtype=float)
+        if values.ndim == 1:
+            reference = max(float(references[0]), 1e-12)
+            scale = float(scales[0])
+            return scale * np.sign(values) * np.log1p(np.abs(values) / reference)
+        references = references[: values.shape[-1]]
+        scales = scales[: values.shape[-1]]
+        return (
+            np.sign(values)
+            * np.log1p(np.abs(values) / np.maximum(references, 1e-12))
+            * scales
+        )
+
     @staticmethod
     def _principal_components(
         vectors: np.ndarray,
@@ -1399,10 +1463,9 @@ class MetroLayout:
         """Map observations to route position plus a local residual strip.
 
         Longitudinal position comes from the spline parameter.  The lateral
-        side comes from a PCA direction fitted in a neighborhood of that
-        parameter, while the lateral magnitude is the robustly clipped
-        residual norm.  This keeps the map readable for high-dimensional data
-        and avoids a discontinuous sign choice at spline bends.
+        coordinate comes from a symmetric-log transform of the signed local
+        residual PCA score.  This keeps the map readable for high-dimensional
+        data without folding all residual directions onto two clipped lines.
         """
         if not getattr(self, "_fitted", False):
             raise RuntimeError("Call fit before transform_points")
@@ -1411,6 +1474,8 @@ class MetroLayout:
         residual = self._standardized_residual(result)
         if not self.residual_axes_:
             self._fit_residual_axes(result)
+        if not getattr(self, "residual_log_scales_", None):
+            self._fit_residual_log_scales(result)
         points = np.zeros((len(route_ids), 2), dtype=float)
         for route, path in enumerate(self.route_paths_):
             members = route_ids == route
@@ -1423,17 +1488,11 @@ class MetroLayout:
             if axes is not None:
                 vector = np.asarray(result.residual, dtype=float)[members] / self.model.scale_
                 signed_component = np.sum(vector * axes, axis=1)
-                side = np.sign(signed_component)
-                zero = side == 0.0
-                if np.any(zero):
-                    route_axis = self.residual_axes_.get(route)
-                    if route_axis is not None:
-                        side[zero] = np.sign(vector[zero] @ route_axis)
             else:
                 side = np.where(np.flatnonzero(members) % 2 == 0, -1.0, 1.0)
-            side[side == 0.0] = 1.0
-            offset = side * np.minimum(residual[members], 1.0 / max(self.residual_scale_, 1e-8))
-            points[members] = positions + self.residual_scale_ * offset[:, None] * normal
+                signed_component = side * residual[members]
+            offset = self._log_scaled_residual_scores(route, signed_component)
+            points[members] = positions + offset[:, None] * normal
         return points
 
     def transform_points_3d(self, result: EmbeddingResult) -> np.ndarray:
@@ -1448,12 +1507,13 @@ class MetroLayout:
             raise RuntimeError("Call fit before transform_points_3d")
         if not self.residual_plane_axes_:
             self._fit_residual_axes(result)
+        if not getattr(self, "residual_log_scales_", None):
+            self._fit_residual_log_scales(result)
 
         route_ids = np.asarray(result.route_id, dtype=int)
         values = np.asarray(result.position, dtype=float)
         vectors = np.asarray(result.residual, dtype=float) / self.model.scale_
         points = np.zeros((len(route_ids), 3), dtype=float)
-        limit = 1.0 / max(self.residual_scale_, 1e-8)
         for route, path in enumerate(self.route_paths_):
             members = route_ids == route
             if not np.any(members):
@@ -1471,12 +1531,10 @@ class MetroLayout:
             scores = np.einsum(
                 "nd,nkd->nk", vectors[members], axes, optimize=True,
             )
-            lateral = np.clip(scores[:, 0], -limit, limit)
-            points[members, :2] = positions + self.residual_scale_ * lateral[:, None] * normal
+            displayed_scores = self._log_scaled_residual_scores(route, scores)
+            points[members, :2] = positions + displayed_scores[:, 0, None] * normal
             if axes.shape[1] > 1:
-                points[members, 2] = self.residual_scale_ * np.clip(
-                    scores[:, 1], -limit, limit,
-                )
+                points[members, 2] = displayed_scores[:, 1]
         return points
 
     def node_positions(self) -> dict[int, np.ndarray]:

@@ -143,112 +143,12 @@ def run_static_demo(
 
 
 def display_interactive_controls(datasets):
-    """Display widgets for refitting a selected dataset with chosen parameters."""
-    from html import escape
-    from io import BytesIO
+    """Display the shared interactive viewer for synthetic datasets."""
+    from .interactive import display_interactive_viewer
 
-    import ipywidgets as widgets
-    from IPython.display import display
-
-    dataset_selector = widgets.Dropdown(options=list(datasets), value='line', description='dataset')
-    centroid_slider = widgets.IntSlider(
-        value=32, min=8, max=64, step=4, description='centroids', continuous_update=False,
+    return display_interactive_viewer(
+        datasets,
+        default_reducer="pca",
+        default_n_centroids=32,
+        default_max_cycles=5,
     )
-    smoothing_slider = widgets.FloatSlider(
-        value=0.02, min=0.0, max=0.20, step=0.005, readout_format='.3f',
-        description='smoothing', continuous_update=False,
-    )
-    cycles_slider = widgets.IntSlider(
-        value=5, min=0, max=8, step=1, description='max cycles', continuous_update=False,
-    )
-    threshold_mode = widgets.Dropdown(
-        options=[('automatic', 'auto'), ('manual', 'manual')],
-        value='auto', description='H1 threshold',
-    )
-    threshold_slider = widgets.FloatSlider(
-        value=0.25, min=0.0, max=1.5, step=0.025, readout_format='.3f',
-        description='manual value', continuous_update=False,
-    )
-    merge_slider = widgets.FloatSlider(
-        value=0.0, min=0.0, max=1.0, step=0.025, readout_format='.3f',
-        description='merge (0=auto)', continuous_update=False,
-    )
-    dispersion_slider = widgets.FloatSlider(
-        value=0.02, min=0.0, max=0.20, step=0.005, readout_format='.3f',
-        description='dispersion', continuous_update=False,
-    )
-    fit_button = widgets.Button(description='Refit selected dataset', button_style='primary')
-    plot_output = widgets.Image(format='png')
-    plot_output.layout.width = '100%'
-    metrics_output = widgets.HTML()
-    last_render_key = None
-
-    def refit_selected_dataset(_=None):
-        nonlocal last_render_key
-        render_key = (
-            dataset_selector.value,
-            centroid_slider.value,
-            smoothing_slider.value,
-            threshold_mode.value,
-            threshold_slider.value,
-            merge_slider.value,
-            dispersion_slider.value,
-        )
-        if render_key == last_render_key:
-            return
-        last_render_key = render_key
-        name = dataset_selector.value
-        points = datasets[name]
-        threshold = None if threshold_mode.value == 'auto' else threshold_slider.value
-        merge_distance = None if merge_slider.value == 0 else merge_slider.value
-        model = SplineGraphEmbedding(
-            n_centroids=centroid_slider.value,
-            persistence_threshold=threshold,
-            spline_smoothing=smoothing_slider.value,
-            max_cycles=cycles_slider.value,
-            random_state=0,
-            merge_junction_distance=merge_distance,
-        )
-        result = model.fit_transform(points)
-        reducer = PCA(n_components=2, random_state=0).fit(points) if points.shape[1] > 2 else None
-        labels = np.zeros(len(points), dtype=int)
-        figure, axes = plt.subplots(1, 4, figsize=(26, 5))
-        projected_title = f"{name}: {'PCA view' if reducer is not None else 'fitted graph'}"
-        plot_embedding_row(
-            axes, points, labels, model, result,
-            projected_title=projected_title,
-            graph_title=f'{name}: graph embedding',
-            metro_lines_title=f'{name}: metro-map lines',
-            metro_points_title=f'{name}: metro-map points',
-            reducer=reducer,
-            jitter_seed=0,
-            metro_residual_width=dispersion_slider.value,
-        )
-        figure.tight_layout()
-        image_buffer = BytesIO()
-        figure.savefig(image_buffer, format='png', dpi=160, bbox_inches='tight')
-        plt.close(figure)
-        plot_output.value = image_buffer.getvalue()
-        metrics = {
-            'cycles': model.realized_cycle_count_,
-            'junctions': len(model.junctions_),
-            'endpoints': len(model.endpoints_),
-            'chains': len(model.routes_),
-            'median_residual': float(np.median(result.residual_norm)),
-        }
-        metrics_output.value = f'<pre>{escape(str(metrics))}</pre>'
-
-    display(widgets.VBox([
-        widgets.HBox([dataset_selector, centroid_slider, cycles_slider]),
-        widgets.HBox([
-            smoothing_slider, threshold_mode, threshold_slider, merge_slider,
-            dispersion_slider,
-        ]),
-        fit_button,
-        plot_output,
-        metrics_output,
-    ]))
-    # Render once before attaching the handler so widget initialization cannot
-    # invoke the same render path a second time.
-    refit_selected_dataset()
-    fit_button.on_click(refit_selected_dataset)

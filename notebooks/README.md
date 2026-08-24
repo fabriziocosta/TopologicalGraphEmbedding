@@ -6,16 +6,17 @@ wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
 (default `4`) and is displayed through a 2D PCA projection.
 
-The final notebook cell calls the reusable `ipywidgets` panel for selecting a
-dataset and interactively refitting it with adjustable centroid count,
-smoothing, cycle limit, persistence threshold, and junction-merge distance.
-Press **Refit selected dataset** after changing the controls.
+The final notebook cell calls the shared `ipywidgets` viewer for selecting a
+dataset and interactively refitting it. Controls are grouped into **Data**,
+**Graph fitting**, **Topology**, and **Display** sections; the latter includes
+the reducer, UMAP neighbor count, and metro dispersion width. Press
+**Render selected dataset** after changing the controls.
 
 `visualize_sklearn_toy_datasets.ipynb` applies the same model to scikit-learn's
 moons, circles, blobs, classification, and Gaussian-quantile generators. It
 shows the fitted graph beside the graph-coordinate embedding `(route_id, position)`.
-Its final cell also provides interactive controls for refitting one selected
-toy dataset.
+Its final cell uses the same grouped interactive viewer as the other notebooks
+for refitting one selected toy dataset.
 
 `visualize_high_dim_sklearn_datasets.ipynb` applies the model to the built-in
 scikit-learn digits, wine, breast-cancer, and diabetes datasets. It shows UMAP
@@ -27,7 +28,7 @@ needed, starts incident lines at the junction-disc radius, and allows routes
 to cross when that preserves the source correspondence. Observations are placed using
 their position and residual offset relative to the assigned spline. It
 includes separate metro line/station and metro point-only panels, plus the
-same interactive controls.
+same grouped interactive viewer, including the UMAP neighbor slider.
 
 Categorical targets use discrete colors; the continuous diabetes target uses a
 pale-blue-to-ink-blue gradient and a target colorbar.
@@ -49,8 +50,9 @@ The notebook saves rendered figures under `notebooks/figures/` when executed.
 Shared plotting logic is part of the installed package under
 `topological_graph_embedding.visualization`: `plots.py` contains the reusable
 `plot_embedding_row` four-panel renderer, `metro.py` contains the schematic
-layout, and `interactive.py` contains the Plotly view. The metro-map point
-panel hides junction and endpoint markers by default; pass
+layout, `interactive.py` contains the Plotly view, and
+`workflows/interactive.py` contains the shared notebook control panel. The
+metro-map point panel hides junction and endpoint markers by default; pass
 `show_metro_nodes=True` to display them.
 
 The notebooks import the installed `topological_graph_embedding` package. The
