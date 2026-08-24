@@ -8,16 +8,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
+from scipy.stats import spearmanr
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.model_selection import KFold
 from sklearn.metrics import accuracy_score
+from sklearn.model_selection import KFold
 from sklearn.utils.multiclass import type_of_target
-from scipy.stats import spearmanr
 
-from .metro import MetroLayout
 from ..results import EmbeddingResult
-
+from .metro import MetroLayout
 
 _REGRESSION_CMAP = LinearSegmentedColormap.from_list(
     'pale_blue_to_ink',
@@ -93,8 +92,8 @@ def evaluate_route_classification(
         classes, counts = np.unique(route_target, return_counts=True)
         metric = {
             'route_id': route,
-            'n_samples': int(len(members)),
-            'n_classes': int(len(classes)),
+            'n_samples': len(members),
+            'n_classes': len(classes),
             'n_splits': int(n_splits),
             'valid': False,
             'route_purity': np.nan,
@@ -192,7 +191,7 @@ def evaluate_route_regression(
         members = np.flatnonzero(route_ids == route)
         metric = {
             'route_id': route,
-            'n_samples': int(len(members)),
+            'n_samples': len(members),
             'n_splits': int(n_splits),
             'valid': False,
             'rank_correlation': np.nan,
@@ -576,8 +575,8 @@ __all__ = [
     'evaluate_route_classification',
     'evaluate_route_regression',
     'evaluate_route_target',
-    'plot_graph_embedding',
     'plot_embedding_row',
+    'plot_graph_embedding',
     'plot_labeled_graph',
     'plot_metro_graph',
     'plot_metro_lines',

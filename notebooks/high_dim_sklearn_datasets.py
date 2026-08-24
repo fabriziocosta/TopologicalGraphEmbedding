@@ -10,9 +10,13 @@ from sklearn.datasets import (
     load_digits,
     load_wine,
 )
-from topological_graph_embedding.visualization.reduction import fit_reducer
-from topological_graph_embedding.visualization.plots import evaluate_route_target, plot_embedding_row
+
 from topological_graph_embedding import SplineGraphEmbedding
+from topological_graph_embedding.visualization.plots import (
+    evaluate_route_target,
+    plot_embedding_row,
+)
+from topological_graph_embedding.visualization.reduction import fit_reducer
 
 
 def _sample_dataset(points, labels, n, random_state):
@@ -175,7 +179,7 @@ def display_interactive_controls(datasets):
     import ipywidgets as widgets
     from IPython.display import display
 
-    dataset_selector = widgets.Dropdown(options=list(datasets), value=list(datasets)[0], description='dataset')
+    dataset_selector = widgets.Dropdown(options=list(datasets), value=next(iter(datasets)), description='dataset')
     centroid_slider = widgets.IntSlider(
         value=36, min=8, max=64, step=4, description='centroids', continuous_update=False,
     )

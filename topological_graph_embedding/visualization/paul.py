@@ -3,15 +3,13 @@
 from pathlib import Path
 
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 import requests
 from sklearn.neighbors import NearestNeighbors
 
-
 DATA_URL = "https://exampledata.scverse.org/scanpy/paul15.h5"
 DEFAULT_CACHE_PATH = Path.home() / ".cache" / "topologicalgraphembedding" / "paul15.h5"
-CLUSTER_TYPE_NAMES = 6 * ["Ery"] + "MEP Mk GMP GMP DC Baso Baso Mo Mo Neu Neu Eos Lymph".split()
+CLUSTER_TYPE_NAMES = 6 * ["Ery"] + ["MEP", "Mk", "GMP", "GMP", "DC", "Baso", "Baso", "Mo", "Mo", "Neu", "Neu", "Eos", "Lymph"]
 TYPE_ORDER = ["Ery", "MEP", "Mk", "GMP", "DC", "Baso", "Mo", "Neu", "Eos", "Lymph"]
 BROAD_LINEAGE = {
     "Ery": "erythroid",
@@ -180,10 +178,19 @@ def plot_graph_coordinate_embedding(ax, result, labels, order, palette):
 
 
 __all__ = [
-    "BROAD_LINEAGE", "DATA_URL", "DEFAULT_CACHE_PATH", "LINEAGE_ORDER",
-    "LINEAGE_PALETTE", "TYPE_ORDER", "download_paul15",
-    "load_paul15", "one_nn_accuracy_2d", "plot_expression_panels",
-    "plot_graph_coordinate_embedding", "preprocess_paul15", "scatter_categories",
+    "BROAD_LINEAGE",
+    "DATA_URL",
+    "DEFAULT_CACHE_PATH",
+    "LINEAGE_ORDER",
+    "LINEAGE_PALETTE",
+    "TYPE_ORDER",
     "_plot_splines_in_pca",
+    "download_paul15",
+    "load_paul15",
+    "one_nn_accuracy_2d",
+    "plot_expression_panels",
+    "plot_graph_coordinate_embedding",
+    "preprocess_paul15",
+    "scatter_categories",
 ]
 

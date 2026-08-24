@@ -6,9 +6,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.decomposition import PCA
 
-from topological_graph_embedding.visualization.plots import plot_embedding_row
-from topological_graph_embedding.datasets import generate_synthetic_datasets, noisy_hypercube
 from topological_graph_embedding import SplineGraphEmbedding
+from topological_graph_embedding.datasets import (
+    generate_synthetic_datasets,
+    noisy_hypercube,
+)
+from topological_graph_embedding.visualization.plots import plot_embedding_row
 
 
 def build_datasets(

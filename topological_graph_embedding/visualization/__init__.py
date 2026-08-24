@@ -21,7 +21,20 @@ _PLOT_NAMES = (
 )
 _PLOT_NAME_SET = set(_PLOT_NAMES)
 
-__all__ = ["MetroLayout", *_PLOT_NAMES]
+__all__ = [
+    "MetroLayout",
+    "evaluate_route_classification",
+    "evaluate_route_regression",
+    "evaluate_route_target",
+    "plot_embedding_row",
+    "plot_graph_embedding",
+    "plot_labeled_graph",
+    "plot_metro_graph",
+    "plot_metro_lines",
+    "plot_metro_points",
+    "plot_projected_graph",
+    "route_colors",
+]
 
 
 def __getattr__(name: str):

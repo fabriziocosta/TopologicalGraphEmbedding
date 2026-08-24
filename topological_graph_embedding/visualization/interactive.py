@@ -1,5 +1,9 @@
 """Interactive Plotly views for spline route embeddings."""
 
+# Plotly's public API intentionally accepts regular dictionaries for nested
+# marker, line, and scene specifications.
+# ruff: noqa: C408
+
 from __future__ import annotations
 
 from typing import Any
@@ -13,8 +17,8 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     go = None
     qualitative = None
 
-from .metro import MetroLayout
 from ..results import EmbeddingResult
+from .metro import MetroLayout
 from .plots import route_colors
 
 
