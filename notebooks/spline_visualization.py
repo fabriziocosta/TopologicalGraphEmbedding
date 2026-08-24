@@ -16,7 +16,7 @@ from sklearn.utils.multiclass import type_of_target
 from scipy.stats import spearmanr
 
 from topological_graph_embedding.metro import MetroLayout
-from topological_graph_embedding import SplineGraphEmbedding
+from topological_graph_embedding import EmbeddingResult
 
 
 _REGRESSION_CMAP = LinearSegmentedColormap.from_list(
@@ -33,7 +33,7 @@ _REGRESSION_CMAP = LinearSegmentedColormap.from_list(
 
 def evaluate_route_classification(
     model: Any,
-    result: dict[str, np.ndarray],
+    result: EmbeddingResult,
     labels,
     classifier=None,
     n_splits: int = 10,
@@ -145,7 +145,7 @@ def evaluate_route_classification(
 
 def evaluate_route_regression(
     model: Any,
-    result: dict[str, np.ndarray],
+    result: EmbeddingResult,
     targets,
     regressor=None,
     n_splits: int = 10,
@@ -221,7 +221,7 @@ def evaluate_route_regression(
 
 def evaluate_route_target(
     model: Any,
-    result: dict[str, np.ndarray],
+    result: EmbeddingResult,
     targets,
     n_splits: int = 10,
     random_state: int = 0,

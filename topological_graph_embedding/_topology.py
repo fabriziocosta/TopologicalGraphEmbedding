@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any, Sequence
+from collections.abc import Sequence
+from itertools import pairwise
+from typing import Any
 
 import numpy as np
 
@@ -86,7 +88,7 @@ class _LandmarkGraph:
             raise ValueError("Self-loops are not supported")
         return (u, v) if u < v else (v, u)
 
-    def copy(self) -> "_LandmarkGraph":
+    def copy(self) -> _LandmarkGraph:
         result = _LandmarkGraph(self.nodes)
         result.edges = self.edges.copy()
         return result
@@ -280,7 +282,7 @@ def _ordered_path_graph(centroids: Array, ordering_points: Array | None = None) 
     _, _, components = np.linalg.svd(centered_reference, full_matrices=False)
     order = np.argsort(centered_reference @ components[0])
     graph = _LandmarkGraph({index: point for index, point in enumerate(centroids)})
-    for left, right in zip(order[:-1], order[1:]):
+    for left, right in pairwise(order):
         graph.add_edge(int(left), int(right))
     return graph
 
@@ -461,8 +463,6 @@ def _rips_h1_persistence(X: Array, max_points: int, random_state: int) -> Array:
     for left in range(n):
         for right in range(left + 1, n):
             edge_data.append((left, right, float(distances[left, right])))
-    edge_lookup = {(left, right): index for index, (left, right, _) in enumerate(edge_data)}
-
     simplices: list[tuple[float, int, tuple[int, ...]]] = []
     simplices.extend((0.0, 0, (vertex,)) for vertex in range(n))
     simplices.extend((distance, 1, (left, right)) for left, right, distance in edge_data)
@@ -545,7 +545,7 @@ def _estimate_persistence(
             sample = X
         result = ripser(sample, maxdim=1)
         return np.asarray(result["dgms"][1], dtype=float), "ripser"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - persistence backend failure is reported
         warnings.warn(
             "Ripser failed; using the NumPy persistent-homology fallback: "
             f"{exc}",

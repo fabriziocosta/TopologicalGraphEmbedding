@@ -3,7 +3,6 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding.datasets import generate_synthetic_datasets

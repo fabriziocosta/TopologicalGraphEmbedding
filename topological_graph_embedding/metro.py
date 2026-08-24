@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 import numpy as np
+
+from .results import EmbeddingResult
 
 
 class MetroLayout:
@@ -65,7 +68,7 @@ class MetroLayout:
         if self.residual_frame not in {"local_pca", "route_pca"}:
             raise ValueError("residual_frame must be 'local_pca' or 'route_pca'")
 
-    def fit(self, result: Any | None = None) -> "MetroLayout":
+    def fit(self, result: EmbeddingResult | None = None) -> MetroLayout:
         """Fit the schematic layout and optionally learn residual-side signs."""
         if not getattr(self.model, "_fitted", False):
             raise RuntimeError("Fit the SplineGraphEmbedding before its metro layout")
@@ -327,7 +330,7 @@ class MetroLayout:
                     node: optimized[index].copy()
                     for index, node in enumerate(self.station_ids_)
                 }
-        except Exception:
+        except Exception:  # noqa: BLE001 - layout optimization has a numerical fallback
             # The force-directed initialization is still a useful schematic if
             # scipy.optimize is unavailable or an optimization fails.
             return
@@ -368,7 +371,7 @@ class MetroLayout:
                     continue
                 cycle_nodes = [neighbor] + list(reversed(descendant_path[:-1]))
                 cycle: list[tuple[int, int, int]] = []
-                for left, right in zip(cycle_nodes[:-1], cycle_nodes[1:]):
+                for left, right in pairwise(cycle_nodes):
                     child = right if parent.get(right) == left else left
                     cycle.append((parent_edge[child], left, right))
                 cycle.append((route_index, node, neighbor))
@@ -1013,7 +1016,7 @@ class MetroLayout:
         discs: list[tuple[np.ndarray, float]],
     ) -> bool:
         """Return whether every segment of ``path`` stays outside discs."""
-        for start, end in zip(path[:-1], path[1:]):
+        for start, end in pairwise(path):
             vector = end - start
             denominator = max(float(vector @ vector), 1e-12)
             for center, radius in discs:
@@ -1097,7 +1100,6 @@ class MetroLayout:
                 if direction_bin is None:
                     direction = oriented[1] - oriented[0]
                     direction_bin = self._direction_bin(np.arctan2(direction[1], direction[0]))
-                current = np.asarray(oriented[-1], dtype=float)
                 radius = max(
                     self.junction_radius
                     + self.junction_radius_per_branch * max(0, self.landmark_graph_.degree(junction) - 3),
@@ -1391,7 +1393,7 @@ class MetroLayout:
             result.append(points)
         return result
 
-    def transform_points(self, result: Any) -> np.ndarray:
+    def transform_points(self, result: EmbeddingResult) -> np.ndarray:
         """Map observations to route position plus a local residual strip.
 
         Longitudinal position comes from the spline parameter.  The lateral
@@ -1432,7 +1434,7 @@ class MetroLayout:
             points[members] = positions + self.residual_scale_ * offset[:, None] * normal
         return points
 
-    def transform_points_3d(self, result: Any) -> np.ndarray:
+    def transform_points_3d(self, result: EmbeddingResult) -> np.ndarray:
         """Map observations to a 3D metro view with a local residual plane.
 
         The spline network lies on ``z=0``.  The first local residual PCA

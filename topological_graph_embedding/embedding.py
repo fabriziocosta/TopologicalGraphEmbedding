@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
 import warnings
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -22,11 +23,9 @@ from ._topology import (
     _merge_nearby_junctions,
     _minimum_spanning_tree,
     _ordered_path_graph,
-    _project_to_principal_line,
     _prune_short_terminal_branches,
-    _symmetric_knn_edges,
-    _LandmarkGraph,
     _standardize,
+    _symmetric_knn_edges,
 )
 from .results import EmbeddingResult
 
@@ -90,7 +89,7 @@ class SplineGraphEmbedding:
         self.topology_neighbors = int(topology_neighbors)
         self._fitted = False
 
-    def fit(self, X: Array | Sequence[Sequence[float]]) -> "SplineGraphEmbedding":
+    def fit(self, X: Array | Sequence[Sequence[float]]) -> SplineGraphEmbedding:
         original = _as_point_cloud(X)
         if original.shape[0] < 3:
             raise ValueError(

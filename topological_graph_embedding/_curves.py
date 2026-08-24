@@ -214,7 +214,7 @@ def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int)
             except RuntimeWarning:
                 smoothing_factor = max(1e-6, 2.0 * smoothing_factor)
                 tck = None
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - backend failure uses explicit fallback
                 warnings.warn(
                     f"SciPy spline fitting failed; using the NumPy fallback: {exc}",
                     RuntimeWarning,
@@ -263,4 +263,3 @@ def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int)
         samples[0] = points[0]
         samples[-1] = points[-1]
     return _SplineRoute(samples, sample_t, closed, tck, backend=backend)
-

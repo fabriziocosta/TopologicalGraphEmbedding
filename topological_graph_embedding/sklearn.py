@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from .embedding import SplineGraphEmbedding
 from .results import EmbeddingResult
@@ -69,7 +70,7 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self,
         X: Array | Sequence[Sequence[float]],
         y: Array | Sequence[Any] | None = None,
-    ) -> "SplineEmbeddingTransformer":
+    ) -> SplineEmbeddingTransformer:
         points = check_array(X, ensure_2d=True, dtype=float)
         self._check_feature_count(points, reset=True)
         self.embedding_ = self._new_embedding().fit(points)
@@ -169,7 +170,7 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         self,
         X: Array | Sequence[Sequence[float]],
         y: Array | Sequence[Any],
-    ) -> "SplineEmbeddingClassifier":
+    ) -> SplineEmbeddingClassifier:
         points, target = check_X_y(X, y, ensure_2d=True, dtype=float, multi_output=True)
         super().fit(points)
         self.estimator_ = (
@@ -220,4 +221,4 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         raise AttributeError("estimator does not provide decision_function or predict_proba")
 
 
-__all__ = ["SplineEmbeddingTransformer", "SplineEmbeddingClassifier"]
+__all__ = ["SplineEmbeddingClassifier", "SplineEmbeddingTransformer"]

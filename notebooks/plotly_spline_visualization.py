@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     qualitative = None
 
 from topological_graph_embedding.metro import MetroLayout
+from topological_graph_embedding import EmbeddingResult
 if __package__:
     from .spline_visualization import spline_colors
 else:
@@ -50,7 +51,7 @@ def _label_groups(labels: Any, count: int) -> list[tuple[str, np.ndarray]]:
 
 def plot_spline_3d(
     model: Any,
-    result: dict[str, np.ndarray],
+    result: EmbeddingResult,
     labels: Any = None,
     layout: MetroLayout | None = None,
     colors: np.ndarray | None = None,

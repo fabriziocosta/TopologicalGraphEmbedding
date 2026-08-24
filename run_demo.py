@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from topological_graph_embedding.datasets import generate_synthetic_datasets
 from topological_graph_embedding import SplineGraphEmbedding
+from topological_graph_embedding.datasets import generate_synthetic_datasets
 
 
 def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, random_state: int = 0) -> list[dict[str, object]]:

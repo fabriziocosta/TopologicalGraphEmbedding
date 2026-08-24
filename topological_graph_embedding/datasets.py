@@ -82,7 +82,7 @@ def noisy_branching_tree(n: int = 500, noise: float = 0.045, rng: np.random.Gene
 
 def noisy_loop_branch(n: int = 500, noise: float = 0.045, rng: np.random.Generator | None = None) -> np.ndarray:
     rng = np.random.default_rng() if rng is None else rng
-    loop_count = int(round(n * 0.78))
+    loop_count = round(n * 0.78)
     angle = rng.uniform(0.0, 2.0 * np.pi, size=loop_count)
     loop = np.column_stack([np.cos(angle), np.sin(angle)])
     branch_count = n - loop_count
@@ -144,5 +144,4 @@ def generate_synthetic_datasets(
 
 
 __all__ = ["SYNTHETIC_DATASETS", "generate_synthetic_datasets", "noisy_hypercube"]
-
 
