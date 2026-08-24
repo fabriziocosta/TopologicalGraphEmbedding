@@ -9,8 +9,6 @@ import numpy as np
 
 Array = np.ndarray
 
-Array = np.ndarray
-
 
 def _as_point_cloud(X: Array | Sequence[Sequence[float]]) -> Array:
     points = np.asarray(X, dtype=float)
@@ -558,4 +556,3 @@ def _estimate_persistence(
             _rips_h1_persistence(X, max_points=max_points, random_state=random_state),
             "numpy-after-ripser-error",
         )
-

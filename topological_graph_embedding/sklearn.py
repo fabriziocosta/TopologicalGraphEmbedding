@@ -210,9 +210,14 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
     def decision_function(self, X: Array | Sequence[Sequence[float]]) -> Array:
         check_is_fitted(self, "estimator_")
         features = self._classifier_features(X)
-        if not hasattr(self.estimator_, "decision_function"):
-            raise AttributeError("estimator does not provide decision_function")
-        return self.estimator_.decision_function(features)
+        if hasattr(self.estimator_, "decision_function"):
+            return self.estimator_.decision_function(features)
+        if hasattr(self.estimator_, "predict_proba"):
+            probabilities = np.asarray(self.estimator_.predict_proba(features))
+            if probabilities.shape[1] == 2:
+                return probabilities[:, 1] - probabilities[:, 0]
+            return probabilities
+        raise AttributeError("estimator does not provide decision_function or predict_proba")
 
 
 __all__ = ["SplineEmbeddingTransformer", "SplineEmbeddingClassifier"]

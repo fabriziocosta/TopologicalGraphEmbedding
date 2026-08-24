@@ -33,7 +33,7 @@ from .results import EmbeddingResult
 Array = np.ndarray
 
 class SplineGraphEmbedding:
-    """Fit a smooth graph of spline highways to a point cloud."""
+    """Fit a smooth graph of spline routes to a point cloud."""
 
     def __init__(
         self,
@@ -93,7 +93,10 @@ class SplineGraphEmbedding:
     def fit(self, X: Array | Sequence[Sequence[float]]) -> "SplineGraphEmbedding":
         original = _as_point_cloud(X)
         if original.shape[0] < 3:
-            raise ValueError("X must contain at least three observations for fitting")
+            raise ValueError(
+                f"n_samples = {original.shape[0]}; X must contain at least three "
+                "observations for fitting"
+            )
         if self.standardize:
             points, mean, scale = _standardize(original)
         else:
@@ -175,7 +178,7 @@ class SplineGraphEmbedding:
         if not self.route_chains_:
             # Pruning can collapse a very small or fully duplicated graph to a
             # single geometric landmark.  Keep the transform contract valid by
-            # retaining one degenerate highway instead of returning -1 IDs.
+            # retaining one degenerate route instead of returning -1 IDs.
             nodes = sorted(self.landmark_graph_.nodes)
             if nodes:
                 self.route_chains_ = [{"nodes": [nodes[0]], "closed": False}]
@@ -193,7 +196,7 @@ class SplineGraphEmbedding:
         self._anchor_closed_junctions()
         if _SCIPY_IMPORT_ERROR is not None:
             warnings.warn(
-                "SciPy is unavailable; spline highways use the NumPy fallback: "
+                "SciPy is unavailable; spline routes use the NumPy fallback: "
                 f"{_SCIPY_IMPORT_ERROR}",
                 RuntimeWarning,
                 stacklevel=2,
@@ -257,24 +260,24 @@ class SplineGraphEmbedding:
         route_id = np.full(len(points), -1, dtype=int)
         t = np.zeros(len(points))
         projection = np.zeros_like(points)
-        for highway, spline in enumerate(self.routes_):
+        for route, spline in enumerate(self.routes_):
             candidate_projection, candidate_t, candidate_d2 = spline.project(points)
             improved = candidate_d2 < best_distance
             best_distance[improved] = candidate_d2[improved]
-            route_id[improved] = highway
+            route_id[improved] = route
             t[improved] = candidate_t[improved]
             projection[improved] = candidate_projection[improved]
         self.invalid_projection_count_ = int(np.sum(route_id < 0))
         if self.invalid_projection_count_:
             raise RuntimeError(
                 "The fitted spline graph could not project all observations; "
-                f"{self.invalid_projection_count_} observations have no highway."
+                f"{self.invalid_projection_count_} observations have no valid route."
             )
         projected_original = projection * self.scale_ + self.mean_
         residual = original - projected_original
         tangent = np.zeros_like(points)
-        for highway, spline in enumerate(self.routes_):
-            members = np.flatnonzero(route_id == highway)
+        for route, spline in enumerate(self.routes_):
+            members = np.flatnonzero(route_id == route)
             if len(members):
                 tangent[members] = spline.tangent(t[members])
         return EmbeddingResult(

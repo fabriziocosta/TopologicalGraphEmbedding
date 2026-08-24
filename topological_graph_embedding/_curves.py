@@ -58,7 +58,7 @@ def _catmull_rom(points: Array, t: Array, closed: bool) -> Array:
 
 @dataclass
 class _SplineRoute:
-    """Dense, parameterized representation of one fitted highway."""
+    """Dense, parameterized representation of one fitted route."""
 
     samples: Array
     t_values: Array
@@ -244,7 +244,7 @@ def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int)
         samples = _catmull_rom(points, sample_t, closed)
     if not closed:
         # Smoothing splines can pull their endpoints away from the graph
-        # nodes.  Blend that correction over several samples so the highway
+        # nodes.  Blend that correction over several samples so the route
         # reaches the node without creating a sharp one-segment kink.
         if tck is not None:
             window = min(0.12, max(0.06, 8.0 / max(count - 1, 1)))
@@ -263,6 +263,4 @@ def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int)
         samples[0] = points[0]
         samples[-1] = points[-1]
     return _SplineRoute(samples, sample_t, closed, tck, backend=backend)
-
-
 

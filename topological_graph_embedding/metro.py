@@ -72,8 +72,8 @@ class MetroLayout:
         if not 0.0 < self.residual_quantile <= 1.0:
             raise ValueError("residual_quantile must be in (0, 1]")
 
-        self.graph_ = self.model.landmark_graph_
-        self.node_ids_ = sorted(self.graph_.nodes)
+        self.landmark_graph_ = self.model.landmark_graph_
+        self.node_ids_ = sorted(self.landmark_graph_.nodes)
         self.node_index_ = {node: index for index, node in enumerate(self.node_ids_)}
         self.route_lengths_ = np.asarray(
             [self._spline_length(spline) for spline in self.model.routes_],
@@ -85,7 +85,7 @@ class MetroLayout:
         self._initial_node_positions = self._force_layout()
         self.source_route_angles_ = self._source_route_angles()
         self.source_route_direction_bins_ = self._source_route_direction_bins()
-        station_ids = [node for node in self.node_ids_ if self.graph_.degree(node) != 2]
+        station_ids = [node for node in self.node_ids_ if self.landmark_graph_.degree(node) != 2]
         self.station_ids_ = station_ids
         self.station_positions_ = {
             node: self._initial_node_positions[self.node_index_[node]].copy()
@@ -109,12 +109,12 @@ class MetroLayout:
         return float(np.sum(np.linalg.norm(np.diff(samples, axis=0), axis=1)))
 
     def _edge_targets(self) -> dict[tuple[int, int], float]:
-        weights = np.asarray(list(self.graph_.edges.values()), dtype=float)
+        weights = np.asarray(list(self.landmark_graph_.edges.values()), dtype=float)
         positive = weights[weights > 1e-12]
         reference = float(np.median(positive)) if len(positive) else 1.0
         return {
             edge: self.layout_scale * max(0.8, float(weight) / reference * 3.0)
-            for edge, weight in self.graph_.edges.items()
+            for edge, weight in self.landmark_graph_.edges.items()
         }
 
     def _force_layout(self) -> np.ndarray:
@@ -131,7 +131,7 @@ class MetroLayout:
         if count == 0:
             return np.empty((0, 2), dtype=float)
         coordinates = np.asarray(
-            [self.graph_.nodes[node] for node in self.node_ids_],
+            [self.landmark_graph_.nodes[node] for node in self.node_ids_],
             dtype=float,
         )
         if coordinates.ndim != 2 or coordinates.shape[1] == 0:
@@ -155,8 +155,8 @@ class MetroLayout:
 
         source_lengths = np.asarray(
             [
-                np.linalg.norm(self.graph_.nodes[left] - self.graph_.nodes[right])
-                for left, right in self.graph_.edges
+                np.linalg.norm(self.landmark_graph_.nodes[left] - self.landmark_graph_.nodes[right])
+                for left, right in self.landmark_graph_.edges
             ],
             dtype=float,
         )
@@ -228,7 +228,7 @@ class MetroLayout:
         """Return oriented source-space angles for every open route."""
         angles: dict[int, float] = {}
         for route, left, right, _ in self._open_routes():
-            vector = np.asarray(self.graph_.nodes[right] - self.graph_.nodes[left], dtype=float)
+            vector = np.asarray(self.landmark_graph_.nodes[right] - self.landmark_graph_.nodes[left], dtype=float)
             if vector.ndim != 1 or len(vector) == 0:
                 continue
             if len(vector) > 2:
@@ -445,10 +445,10 @@ class MetroLayout:
                     paths.append(np.zeros((2, 2), dtype=float))
                 else:
                     start_preferred = None
-                    if self.graph_.degree(nodes[0]) >= 3:
+                    if self.landmark_graph_.degree(nodes[0]) >= 3:
                         start_preferred = self.source_route_direction_bins_.get((index, 0))
                     end_outward = None
-                    if self.graph_.degree(nodes[-1]) >= 3:
+                    if self.landmark_graph_.degree(nodes[-1]) >= 3:
                         end_outward = self.source_route_direction_bins_.get((index, 1))
                     end_preferred = None if end_outward is None else (end_outward + 4) % 8
                     paths.append(self._octilinear_path(
@@ -481,7 +481,7 @@ class MetroLayout:
                 np.arange(len(unique_nodes)) * sample_count / len(unique_nodes)
             ).astype(int) % sample_count
             attached_junctions = list(dict.fromkeys(
-                node for node in unique_nodes if self.graph_.degree(node) >= 3
+                node for node in unique_nodes if self.landmark_graph_.degree(node) >= 3
             ))
             if attached_junctions:
                 # A junction belonging to a cycle is an intersection on the
@@ -518,7 +518,7 @@ class MetroLayout:
             if len(unique_nodes) > 1 and unique_nodes[0] == unique_nodes[-1]:
                 unique_nodes = unique_nodes[:-1]
             attached = list(dict.fromkeys(
-                node for node in unique_nodes if self.graph_.degree(node) >= 3
+                node for node in unique_nodes if self.landmark_graph_.degree(node) >= 3
             ))
             if attached:
                 placements.append((route, attached))
@@ -534,10 +534,10 @@ class MetroLayout:
                 vector = right - left
                 distance = float(np.linalg.norm(vector))
                 left_radius = self.junction_radius + self.junction_radius_per_branch * max(
-                    0, self.graph_.degree(left_node) - 3
+                    0, self.landmark_graph_.degree(left_node) - 3
                 )
                 right_radius = self.junction_radius + self.junction_radius_per_branch * max(
-                    0, self.graph_.degree(right_node) - 3
+                    0, self.landmark_graph_.degree(right_node) - 3
                 )
                 required = left_radius + right_radius + 0.20
                 if distance >= required:
@@ -570,10 +570,10 @@ class MetroLayout:
                 end_node, self._initial_node_positions[self.node_index_[end_node]]
             )
             start_preferred = None
-            if self.graph_.degree(start_node) >= 3:
+            if self.landmark_graph_.degree(start_node) >= 3:
                 start_preferred = self.source_route_direction_bins_.get((index, 0))
             end_outward = None
-            if self.graph_.degree(end_node) >= 3:
+            if self.landmark_graph_.degree(end_node) >= 3:
                 end_outward = self.source_route_direction_bins_.get((index, 1))
             end_preferred = None if end_outward is None else (end_outward + 4) % 8
             paths[index] = self._octilinear_path(
@@ -587,7 +587,7 @@ class MetroLayout:
     def _junction_incidences(self) -> dict[int, list[tuple[int, int]]]:
         """Return ``(route, side)`` incidences for every junction station."""
         incidences: dict[int, list[tuple[int, int]]] = {
-            node: [] for node in self.graph_.nodes if self.graph_.degree(node) >= 3
+            node: [] for node in self.landmark_graph_.nodes if self.landmark_graph_.degree(node) >= 3
         }
         for route, chain in enumerate(self.model.route_chains_):
             if chain["closed"] or len(chain["nodes"]) < 2:
@@ -640,7 +640,7 @@ class MetroLayout:
         self.route_junction_ports_ = {}
         directions = self._canonical_directions()
         for node, members in incidences.items():
-            degree = self.graph_.degree(node)
+            degree = self.landmark_graph_.degree(node)
             radius = self.junction_radius + self.junction_radius_per_branch * max(0, degree - 3)
             offsets: list[float] = []
             for route, side in members:
@@ -894,9 +894,9 @@ class MetroLayout:
         for route_index, offset in self.route_lane_offsets_.items():
             chain = self.model.route_chains_[route_index]
             left, right = int(chain["nodes"][0]), int(chain["nodes"][-1])
-            if self.graph_.degree(left) == 1:
+            if self.landmark_graph_.degree(left) == 1:
                 endpoint_shifts[left] = endpoint_shifts.get(left, np.zeros(2)) + offset
-            if self.graph_.degree(right) == 1:
+            if self.landmark_graph_.degree(right) == 1:
                 endpoint_shifts[right] = endpoint_shifts.get(right, np.zeros(2)) + offset
 
         for station, shift in endpoint_shifts.items():
@@ -953,7 +953,7 @@ class MetroLayout:
                     lateral = float((start - center) @ normal)
                     radius = max(
                         self.junction_radius
-                        + self.junction_radius_per_branch * max(0, self.graph_.degree(left) - 3),
+                        + self.junction_radius_per_branch * max(0, self.landmark_graph_.degree(left) - 3),
                         self._required_junction_radii_.get(left, 0.0),
                     )
                     travel = np.sqrt(max(radius * radius - lateral * lateral, 0.0)) + 0.20
@@ -971,7 +971,7 @@ class MetroLayout:
                     lateral = float((end - center) @ normal)
                     radius = max(
                         self.junction_radius
-                        + self.junction_radius_per_branch * max(0, self.graph_.degree(right) - 3),
+                        + self.junction_radius_per_branch * max(0, self.landmark_graph_.degree(right) - 3),
                         self._required_junction_radii_.get(right, 0.0),
                     )
                     travel = np.sqrt(max(radius * radius - lateral * lateral, 0.0)) + 0.20
@@ -1087,7 +1087,7 @@ class MetroLayout:
                 continue
             left, right = int(chain["nodes"][0]), int(chain["nodes"][-1])
             for side, (junction, endpoint) in enumerate(((left, right), (right, left))):
-                if self.graph_.degree(junction) < 3 or self.graph_.degree(endpoint) != 1:
+                if self.landmark_graph_.degree(junction) < 3 or self.landmark_graph_.degree(endpoint) != 1:
                     continue
                 if len(paths[route]) < 2:
                     continue
@@ -1100,7 +1100,7 @@ class MetroLayout:
                 current = np.asarray(oriented[-1], dtype=float)
                 radius = max(
                     self.junction_radius
-                    + self.junction_radius_per_branch * max(0, self.graph_.degree(junction) - 3),
+                    + self.junction_radius_per_branch * max(0, self.landmark_graph_.degree(junction) - 3),
                     self._required_junction_radii_.get(junction, 0.0),
                 )
                 route_target = self.layout_scale * max(

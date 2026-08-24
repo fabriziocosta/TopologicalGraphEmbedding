@@ -28,7 +28,7 @@ def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, 
         )
         transformed = model.fit_transform(points)
         figure_path = output / f"{name}.png"
-        ax = model.plot(points, show_projections=True, title=name.replace("-", " ").title())
+        ax = model.plot_network(points, show_projections=True, title=name.replace("-", " ").title())
         ax.figure.savefig(figure_path, dpi=160, bbox_inches="tight")
         ax.figure.clf()
         rows.append(
@@ -39,7 +39,7 @@ def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, 
                 "junctions": len(model.junctions_),
                 "endpoints": len(model.endpoints_),
                 "spline_chains": len(model.routes_),
-                "median_projection_residual": float(np.median(transformed["residual_norm"])),
+                "median_projection_residual": float(np.median(transformed.residual_norm)),
                 "figure": str(figure_path),
             }
         )

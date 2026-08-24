@@ -2,7 +2,7 @@ You are implementing a prototype dimensionality-reduction / manifold-skeleton al
 
 The central idea is:
 
-**Represent a noisy point cloud by a small smooth graph of spline “highways.”**  
+**Represent a noisy point cloud by a small smooth graph of spline “routes.”**  
 The graph should capture the topology of the data: lines, branches, junctions, loops, and multiple cycles. Individual observations are then projected onto this spline graph, with their residual displacement treated as local noise or off-manifold variation.
 
 The intended pipeline is:
@@ -146,7 +146,7 @@ For the first prototype, use the degree of nodes in the simplified graph.
 Interpret:
 
 - degree 1 → endpoint
-- degree 2 → ordinary point along a highway
+- degree 2 → ordinary point along a route
 - degree \(\ge 3\) → junction
 
 Later this should be replaced or supplemented with persistent local topology, but degree-based junctions are sufficient for the initial version.
@@ -194,7 +194,7 @@ $$
 
 The first term keeps the spline close to the extracted backbone.
 
-The curvature term discourages unnecessarily wiggly highways.
+The curvature term discourages unnecessarily wiggly routes.
 
 Parameterize the input vertices by cumulative arc length before fitting.
 
@@ -447,11 +447,11 @@ $$
 \rightarrow
 \text{topological skeleton}
 \rightarrow
-\text{smooth manifold highways}
+\text{smooth manifold routes}
 }
 $$
 
-with observations represented as noisy deviations around those highways:
+with observations represented as noisy deviations around those routes:
 
 $$
 \boxed{
