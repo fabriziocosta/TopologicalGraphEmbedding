@@ -92,6 +92,7 @@ def run_static_demo(
     persistence_threshold=None,
     spline_smoothing=0.02,
     max_cycles=5,
+    metro_residual_width=0.02,
 ):
     """Build, fit, plot, and summarize all static synthetic datasets."""
     project_root = Path(project_root)
@@ -126,6 +127,7 @@ def run_static_demo(
             metro_points_title=f'{name}: metro-map points',
             reducer=reducers[name],
             jitter_seed=row,
+            metro_residual_width=metro_residual_width,
         )
 
     figure.suptitle(
@@ -171,6 +173,10 @@ def display_interactive_controls(datasets):
         value=0.0, min=0.0, max=1.0, step=0.025, readout_format='.3f',
         description='merge (0=auto)', continuous_update=False,
     )
+    dispersion_slider = widgets.FloatSlider(
+        value=0.02, min=0.0, max=0.20, step=0.005, readout_format='.3f',
+        description='dispersion', continuous_update=False,
+    )
     fit_button = widgets.Button(description='Refit selected dataset', button_style='primary')
     plot_output = widgets.Image(format='png')
     plot_output.layout.width = '100%'
@@ -186,6 +192,7 @@ def display_interactive_controls(datasets):
             threshold_mode.value,
             threshold_slider.value,
             merge_slider.value,
+            dispersion_slider.value,
         )
         if render_key == last_render_key:
             return
@@ -215,6 +222,7 @@ def display_interactive_controls(datasets):
             metro_points_title=f'{name}: metro-map points',
             reducer=reducer,
             jitter_seed=0,
+            metro_residual_width=dispersion_slider.value,
         )
         figure.tight_layout()
         image_buffer = BytesIO()
@@ -232,7 +240,10 @@ def display_interactive_controls(datasets):
 
     display(widgets.VBox([
         widgets.HBox([dataset_selector, centroid_slider, cycles_slider]),
-        widgets.HBox([smoothing_slider, threshold_mode, threshold_slider, merge_slider]),
+        widgets.HBox([
+            smoothing_slider, threshold_mode, threshold_slider, merge_slider,
+            dispersion_slider,
+        ]),
         fit_button,
         plot_output,
         metrics_output,

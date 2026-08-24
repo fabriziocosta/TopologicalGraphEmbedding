@@ -136,6 +136,8 @@ def run_demo(
     spline_smoothing=0.02,
     max_cycles=4,
     reducer='umap',
+    metro_residual_width=0.02,
+    umap_n_neighbors=15,
 ):
     """Build, fit, plot, and summarize the high-dimensional datasets."""
     datasets = build_datasets(n=n)
@@ -149,7 +151,12 @@ def run_demo(
 
     figure, axes = plt.subplots(len(datasets), 4, figsize=(30, 4 * len(datasets)))
     for row, (name, (points, labels)) in enumerate(datasets.items()):
-        reducer_model = fit_reducer(points, method=reducer, random_state=0)
+        reducer_model = fit_reducer(
+            points,
+            method=reducer,
+            random_state=0,
+            n_neighbors=umap_n_neighbors,
+        )
         result = embeddings[name]
         plot_embedding_row(
             axes[row], points, labels, models[name], result,
@@ -160,6 +167,7 @@ def run_demo(
             reducer=reducer_model,
             jitter_seed=row,
             route_metrics=models[name].route_metrics_,
+            metro_residual_width=metro_residual_width,
         )
 
     figure.suptitle('High-dimensional scikit-learn datasets', fontsize=16, y=0.995)
@@ -203,9 +211,17 @@ def display_interactive_controls(datasets):
         value=0.0, min=0.0, max=1.0, step=0.025, readout_format='.3f',
         description='merge (0=auto)', continuous_update=False,
     )
+    dispersion_slider = widgets.FloatSlider(
+        value=0.02, min=0.0, max=0.20, step=0.005, readout_format='.3f',
+        description='dispersion', continuous_update=False,
+    )
     reducer_selector = widgets.Dropdown(
         options=[('UMAP (default)', 'umap'), ('PCA', 'pca')],
         value='umap', description='2D reducer',
+    )
+    neighbors_slider = widgets.IntSlider(
+        value=15, min=2, max=100, step=1, description='UMAP neighbors',
+        continuous_update=False,
     )
     fit_button = widgets.Button(description='Refit selected dataset', button_style='primary')
     plot_output = widgets.Image(format='png')
@@ -222,7 +238,9 @@ def display_interactive_controls(datasets):
             threshold_mode.value,
             threshold_slider.value,
             merge_slider.value,
+            dispersion_slider.value,
             reducer_selector.value,
+            neighbors_slider.value,
         )
         if render_key == last_render_key:
             return
@@ -244,7 +262,12 @@ def display_interactive_controls(datasets):
             model, result, labels, n_splits=10, random_state=0,
         )
         reducer_method = reducer_selector.value
-        reducer = fit_reducer(points, method=reducer_method, random_state=0)
+        reducer = fit_reducer(
+            points,
+            method=reducer_method,
+            random_state=0,
+            n_neighbors=neighbors_slider.value,
+        )
         figure, axes = plt.subplots(1, 4, figsize=(30, 5))
         plot_embedding_row(
             axes, points, labels, model, result,
@@ -258,6 +281,7 @@ def display_interactive_controls(datasets):
                 model.route_metrics_
                 if hasattr(model, 'route_metrics_') else None
             ),
+            metro_residual_width=dispersion_slider.value,
         )
         figure.tight_layout()
         image_buffer = BytesIO()
@@ -292,7 +316,8 @@ def display_interactive_controls(datasets):
         widgets.HBox([dataset_selector, centroid_slider, cycles_slider]),
         widgets.HBox([
             smoothing_slider, threshold_mode, threshold_slider, merge_slider,
-            reducer_selector,
+            dispersion_slider,
+            reducer_selector, neighbors_slider,
         ]),
         fit_button,
         plot_output,

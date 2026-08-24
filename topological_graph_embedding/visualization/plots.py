@@ -468,6 +468,7 @@ def plot_metro_lines(axis, model, title, layout=None, colors=None):
 
 def plot_metro_points(
     axis, labels, model, result, title, layout=None, show_nodes=False, colors=None,
+    residual_width=0.02,
 ):
     """Plot observations in the fitted metro-map coordinates.
 
@@ -477,7 +478,9 @@ def plot_metro_points(
     route-colored outlines keep the spline assignment visible as well.
     """
     if layout is None:
-        layout = MetroLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(
+            model, random_state=0, residual_width=residual_width,
+        ).fit(result)
     displayed_points = layout.transform_points(result)
     if colors is None:
         colors = route_colors(model)
@@ -492,10 +495,14 @@ def plot_metro_points(
     _format_metro_axis(axis, title)
 
 
-def plot_metro_graph(axis, labels, model, result, title, layout=None, colors=None):
+def plot_metro_graph(
+    axis, labels, model, result, title, layout=None, colors=None, residual_width=0.02,
+):
     """Plot the combined metro routes, observations, and stations."""
     if layout is None:
-        layout = MetroLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(
+            model, random_state=0, residual_width=residual_width,
+        ).fit(result)
     if colors is None:
         colors = route_colors(model)
     plot_metro_points(axis, labels, model, result, title, layout=layout, colors=colors)
@@ -519,6 +526,7 @@ def plot_embedding_row(
     show_metro_nodes=False,
     classification_metrics=None,
     route_metrics=None,
+    metro_residual_width=0.02,
 ):
     """Render the standard four-panel embedding row used by the notebooks.
 
@@ -543,7 +551,9 @@ def plot_embedding_row(
         route_metrics=route_metrics,
     )
     if layout is None:
-        layout = MetroLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(
+            model, random_state=0, residual_width=metro_residual_width,
+        ).fit(result)
     plot_metro_lines(
         axes[2], model, metro_lines_title, layout=layout, colors=colors,
     )
@@ -584,4 +594,3 @@ __all__ = [
     'plot_projected_graph',
     'route_colors',
 ]
-

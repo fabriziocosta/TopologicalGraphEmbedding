@@ -65,6 +65,8 @@ class MetroLayout:
             raise ValueError("junction_port_spacing must be non-negative")
         if self.layout_scale <= 0.0:
             raise ValueError("layout_scale must be positive")
+        if self.residual_width < 0.0 or not np.isfinite(self.residual_width):
+            raise ValueError("residual_width must be finite and non-negative")
         if self.residual_frame not in {"local_pca", "route_pca"}:
             raise ValueError("residual_frame must be 'local_pca' or 'route_pca'")
 
