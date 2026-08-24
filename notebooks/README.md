@@ -20,7 +20,7 @@ for refitting one selected toy dataset.
 
 `visualize_high_dim_sklearn_datasets.ipynb` applies the model to the built-in
 scikit-learn digits, wine, breast-cancer, and diabetes datasets. It shows UMAP
-projections by default (with PCA available as an option), longitudinal graph coordinates, and a schematic metro-map layout
+projections by default (with PCA and classical MDS available as options), longitudinal graph coordinates, and a schematic metro-map layout
 of the fitted graphs. The metro-map view preserves the fitted graph's broad
 source-space placement and branch ordering while simplifying routes, keeps
 spline routes straight where possible, uses parallel offset lanes where

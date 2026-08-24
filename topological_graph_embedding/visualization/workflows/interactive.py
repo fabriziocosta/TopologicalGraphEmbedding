@@ -80,8 +80,8 @@ def display_interactive_viewer(
     if default_reducer is None:
         default_reducer = "umap" if first_points.shape[1] > 2 else "native"
     default_reducer = str(default_reducer).lower()
-    if default_reducer not in {"native", "pca", "umap"}:
-        raise ValueError("default_reducer must be 'native', 'pca', or 'umap'")
+    if default_reducer not in {"native", "pca", "mds", "umap"}:
+        raise ValueError("default_reducer must be 'native', 'pca', 'mds', or 'umap'")
 
     style = {"description_width": "initial"}
     control_width = widgets.Layout(width="270px")
@@ -126,6 +126,7 @@ def display_interactive_viewer(
         options=[
             ("Original first 2 features", "native"),
             ("PCA", "pca"),
+            ("Classical MDS", "mds"),
             ("UMAP", "umap"),
         ],
         value=default_reducer,
@@ -207,6 +208,7 @@ def display_interactive_viewer(
         display_name = {
             "native": "original feature view",
             "pca": "PCA view",
+            "mds": "classical MDS view",
             "umap": "UMAP view",
         }[reducer_method]
         figure, axes = plt.subplots(1, 4, figsize=(30, 5))

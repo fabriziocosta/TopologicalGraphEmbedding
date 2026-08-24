@@ -307,8 +307,9 @@ def plot_projected_graph(axis, points, labels, model, title, reducer, colors=Non
     ))
     axis.set_title(title)
     axis.set_aspect('equal', adjustable='datalim')
-    axis.set_xlabel('PCA component 1')
-    axis.set_ylabel('PCA component 2')
+    reducer_name = getattr(reducer, 'display_name_', type(reducer).__name__)
+    axis.set_xlabel(f'{reducer_name} component 1')
+    axis.set_ylabel(f'{reducer_name} component 2')
 
 
 def _metric_value(metric, name):

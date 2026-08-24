@@ -177,7 +177,7 @@ topological_graph_embedding/
     ├── network.py               # fitted-network Matplotlib rendering
     ├── plots.py                 # static plots and route evaluation
     ├── interactive.py           # Plotly 3D rendering
-    ├── reduction.py             # PCA/UMAP display reducers
+    ├── reduction.py             # PCA/MDS/UMAP display reducers
     └── paul.py                  # optional Paul et al. display helpers
 ```
 

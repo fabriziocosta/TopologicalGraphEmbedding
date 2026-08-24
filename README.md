@@ -36,7 +36,7 @@ The resulting representation separates three kinds of information:
 
 The public result also contains `projected`, the point on the fitted route,
 and `tangent`, the local route direction. In high-dimensional data, the graph
-is fitted in the original feature space; PCA or UMAP is used only to display
+is fitted in the original feature space; PCA, classical MDS, or UMAP is used only to display
 that fitted graph.
 
 This distinction matters. A two-dimensional display can make a complicated
@@ -199,8 +199,8 @@ reducer = fit_reducer(X, method="umap", n_neighbors=15)
 ```
 
 UMAP's `n_neighbors` changes the visual layout's local/global emphasis only.
-It does not refit the topological graph. PCA is available as a deterministic
-linear display alternative. The high-dimensional notebook exposes the UMAP
+It does not refit the topological graph. PCA and classical MDS are available
+as deterministic display alternatives. The high-dimensional notebook exposes the UMAP
 neighbor count and metro dispersion width through interactive sliders.
 
 The shared four-panel renderer is available through
@@ -273,7 +273,7 @@ section. The sparse topology is an approximation and can under-realize a
 persistence target; inspect `topology_shortfall_` when cycles matter.
 
 Metro coordinates are a display transform, not distances in the original
-feature space. UMAP and PCA plots are also display transforms and should not be
+feature space. UMAP, PCA, and classical MDS plots are also display transforms and should not be
 used as substitutes for the original-space `projected`, `residual`, or
 `position` values.
 
@@ -295,7 +295,7 @@ topological_graph_embedding/
     ├── network.py               # feature-space network rendering
     ├── plots.py                 # static plotting and evaluation
     ├── interactive.py           # Plotly 3D view
-    ├── reduction.py             # PCA/UMAP display reducers
+    ├── reduction.py             # PCA/MDS/UMAP display reducers
     └── workflows/               # reusable notebook workflows
 ```
 
