@@ -67,7 +67,10 @@ def fit_datasets(
 
 def _plot_summary(summary, figure_dir):
     columns = ['dataset', 'cycles', 'junctions', 'endpoints', 'spline_chains', 'median_residual']
-    table_values = [[row[column] for column in columns] for row in summary]
+    table_values = [[
+        f'{row[column]:.4f}' if column == 'median_residual' else row[column]
+        for column in columns
+    ] for row in summary]
     figure, axis = plt.subplots(figsize=(12, 3.2))
     axis.axis('off')
     table = axis.table(cellText=table_values, colLabels=columns, loc='center', cellLoc='center')
@@ -238,4 +241,3 @@ def display_interactive_controls(datasets):
     # invoke the same render path a second time.
     refit_selected_dataset()
     fit_button.on_click(refit_selected_dataset)
-

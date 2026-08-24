@@ -112,7 +112,8 @@ def _plot_summary(summary, figure_dir):
         'score_type', 'route_score',
     ]
     values = [[
-        f'{row[column]:.2f}' if isinstance(row[column], (float, np.floating))
+        f'{row[column]:.4f}' if column == 'median_residual'
+        else f'{row[column]:.2f}' if isinstance(row[column], (float, np.floating))
         else row[column]
         for column in columns
     ] for row in summary]
@@ -301,4 +302,3 @@ def display_interactive_controls(datasets):
     # invoke the same render path a second time.
     refit_selected_dataset()
     fit_button.on_click(refit_selected_dataset)
-
