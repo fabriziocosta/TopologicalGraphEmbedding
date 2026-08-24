@@ -1,0 +1,11 @@
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+scikit-learn>=1.3
+umap-learn>=0.5.5
+ipywidgets>=8.0
+plotly>=5.18
+h5py>=3.8
+requests>=2.28
+# Optional: enables faster and more accurate persistent homology.
+ripser>=0.6

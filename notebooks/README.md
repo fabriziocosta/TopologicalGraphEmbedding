@@ -1,0 +1,73 @@
+# Notebooks
+
+`visualize_synthetic_distributions.ipynb` runs the model on all seven 2D
+synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
+wrapper around `synthetic_distributions.py`: edit its parameters and rerun the
+function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
+(default `4`) and is displayed through a 2D PCA projection.
+
+The final notebook cell calls the reusable `ipywidgets` panel for selecting a
+dataset and interactively refitting it with adjustable centroid count,
+smoothing, cycle limit, persistence threshold, and junction-merge distance.
+Press **Refit selected dataset** after changing the controls.
+
+`visualize_sklearn_toy_datasets.ipynb` applies the same model to scikit-learn's
+moons, circles, blobs, classification, and Gaussian-quantile generators. It
+shows the fitted graph beside the graph-coordinate embedding `(highway_id, t)`.
+Its final cell also provides interactive controls for refitting one selected
+toy dataset.
+
+`visualize_high_dim_sklearn_datasets.ipynb` applies the model to the built-in
+scikit-learn digits, wine, breast-cancer, and diabetes datasets. It shows UMAP
+projections by default (with PCA available as an option), longitudinal graph coordinates, and a schematic metro-map layout
+of the fitted graphs. The metro-map view preserves the fitted graph's broad
+source-space placement and branch ordering while simplifying routes, keeps
+spline routes straight where possible, uses parallel offset lanes where
+needed, starts incident lines at the junction-disc radius, and allows routes
+to cross when that preserves the source correspondence. Observations are placed using
+their position and residual offset relative to the assigned spline. It
+includes separate metro line/station and metro point-only panels, plus the
+same interactive controls.
+
+Categorical targets use discrete colors; the continuous diabetes target uses a
+pale-blue-to-ink-blue gradient and a target colorbar.
+
+`visualize_paul_single_cell.ipynb` applies the model to the Paul et al. mouse
+bone-marrow MARS-seq experiment. It downloads the public `paul15.h5` file to
+`~/.cache/topologicalgraphembedding/`, preprocesses expression without using
+cell labels during fitting, and shows PCA, intrinsic graph coordinates, the
+fitted spline graph, broad lineages, and marker-expression panels.
+
+Launch it from the repository root with:
+
+```bash
+jupyter notebook notebooks/visualize_synthetic_distributions.ipynb
+```
+
+The notebook saves rendered figures under `notebooks/figures/` when executed.
+
+Shared plotting logic for these notebooks lives in
+`notebooks/spline_visualization.py`, including the reusable `plot_embedding_row`
+four-panel renderer. The metro-map point panel hides junction and endpoint
+markers by default; pass `show_metro_nodes=True` to display them.
+
+The `notebooks/` directory is self-contained: it includes local copies of
+`topological_spline_graph.py`, `metro_layout.py`, and `synthetic_datasets.py`.
+The notebook bootstrap adds this directory to the import path, so the
+notebooks do not depend on the repository root being the current directory.
+
+Start Jupyter from either the repository root or this directory:
+
+```bash
+jupyter notebook notebooks/visualize_sklearn_toy_datasets.ipynb
+# or, from notebooks/: jupyter notebook visualize_sklearn_toy_datasets.ipynb
+```
+
+For reusable sklearn pipelines, `spline_sklearn.py` provides
+`SplineGraphTransformer` and `SplineGraphClassifier`. The classifier combines
+spline identity, longitudinal position, and residual coordinates in the local
+hyperplane perpendicular to each spline with a configurable downstream
+estimator; its default is a random forest. The high-dimensional dataset view
+adds one per-route score just past `t=1`: normalized out-of-fold multiclass
+accuracy from the route coordinates for categorical targets, or Spearman rank
+correlation for regression targets.
