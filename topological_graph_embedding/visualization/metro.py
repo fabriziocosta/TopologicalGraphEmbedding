@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from .results import EmbeddingResult
+from ..results import EmbeddingResult
 
 
 class MetroLayout:
@@ -1485,4 +1485,3 @@ class MetroLayout:
 
 
 __all__ = ["MetroLayout"]
-
