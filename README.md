@@ -56,10 +56,12 @@ classifier.fit(X_train, y_train)
 y_pred = classifier.predict(X_test)
 ```
 
-Pass a downstream sklearn estimator through `estimator=`. The metro layout,
-synthetic datasets, and plotting helpers are optional modules under
-`topological_graph_embedding.metro`, `topological_graph_embedding.datasets`,
-and the `notebooks` package.
+Pass a downstream sklearn estimator through `estimator=`. Visualization is a
+first-class part of the package: `topological_graph_embedding.visualization`
+contains `MetroLayout`, static route plots and evaluation helpers, interactive
+Plotly views, and optional dataset-specific display helpers. Synthetic data
+are in `topological_graph_embedding.datasets`; sklearn and plotting
+dependencies are loaded only when those optional modules are imported.
 
 Synthetic data are generated with `generate_synthetic_datasets()`; the
 interactive notebooks in `notebooks/` import the installed package and keep

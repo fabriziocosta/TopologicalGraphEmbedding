@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding.datasets import generate_synthetic_datasets
-from topological_graph_embedding.metro import MetroLayout
+from topological_graph_embedding.visualization import MetroLayout
 
 
 def test_metro_layout_consumes_embedding_result():
