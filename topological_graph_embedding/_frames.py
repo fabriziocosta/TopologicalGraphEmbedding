@@ -122,9 +122,9 @@ def _normal_frames(model: Any, result: Any) -> Array:
     Coordinates in this frame describe only displacement perpendicular to the
     local spline tangent; the longitudinal direction is intentionally omitted.
     """
-    highway_ids = np.asarray(result.route_id, dtype=int)
+    route_ids = np.asarray(result.route_id, dtype=int)
     t_values = np.asarray(result.position, dtype=float)
-    n_samples = len(highway_ids)
+    n_samples = len(route_ids)
     n_features = int(np.asarray(result.residual).shape[1])
     frames = np.zeros((n_samples, n_features, max(0, n_features - 1)), dtype=float)
     tangent_vectors = result.tangent
@@ -132,7 +132,7 @@ def _normal_frames(model: Any, result: Any) -> Array:
         tangent_vectors = np.asarray(tangent_vectors, dtype=float)
     frame_grids = getattr(model, "normal_frame_grids_", None)
     for route, spline in enumerate(model.routes_):
-        members = np.flatnonzero(highway_ids == route)
+        members = np.flatnonzero(route_ids == route)
         if not len(members):
             continue
         if tangent_vectors is None:
@@ -185,5 +185,4 @@ def _normal_coordinates(model: Any, result: Any) -> Array:
     if frames.shape[2] == 0:
         return np.empty((len(residual), 0), dtype=float)
     return np.einsum("ni,nij->nj", residual_scaled, frames)
-
 

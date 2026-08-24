@@ -22,8 +22,7 @@ def test_embedding_result_is_frozen_and_attribute_based():
     ]
     with pytest.raises(FrozenInstanceError):
         result.position = np.zeros(2)
-    with pytest.raises(TypeError):
-        result["route_id"]  # type: ignore[index]
+    assert not hasattr(result, "__getitem__")
 
 
 def test_embedding_projection_and_normal_coordinates_are_batch_independent():

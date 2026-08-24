@@ -15,7 +15,7 @@ from .results import EmbeddingResult
 Array = np.ndarray
 
 
-class SplineEmbeddingTransformer(BaseEstimator, TransformerMixin):
+class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
     """Fit a spline route network and expose numeric embedding features."""
 
     def __init__(
@@ -83,8 +83,8 @@ class SplineEmbeddingTransformer(BaseEstimator, TransformerMixin):
         check_is_fitted(self, "n_features_in_")
         if points.shape[1] != self.n_features_in_:
             raise ValueError(
-                f"X has {points.shape[1]} features, but this estimator was "
-                f"fitted with {self.n_features_in_} features."
+                f"X has {points.shape[1]} features, but {self.__class__.__name__} "
+                f"is expecting {self.n_features_in_} features as input"
             )
 
     def _make_feature_names(self) -> np.ndarray:
@@ -202,15 +202,17 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
 
     def predict_proba(self, X: Array | Sequence[Sequence[float]]) -> Array:
         check_is_fitted(self, "estimator_")
+        features = self._classifier_features(X)
         if not hasattr(self.estimator_, "predict_proba"):
             raise AttributeError("estimator does not provide predict_proba")
-        return self.estimator_.predict_proba(self._classifier_features(X))
+        return self.estimator_.predict_proba(features)
 
     def decision_function(self, X: Array | Sequence[Sequence[float]]) -> Array:
         check_is_fitted(self, "estimator_")
+        features = self._classifier_features(X)
         if not hasattr(self.estimator_, "decision_function"):
             raise AttributeError("estimator does not provide decision_function")
-        return self.estimator_.decision_function(self._classifier_features(X))
+        return self.estimator_.decision_function(features)
 
 
 __all__ = ["SplineEmbeddingTransformer", "SplineEmbeddingClassifier"]

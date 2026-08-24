@@ -1250,13 +1250,13 @@ class MetroLayout:
         if result is None:
             return
         vectors = np.asarray(result.residual, dtype=float) / self.model.scale_
-        highway_ids = np.asarray(result.route_id, dtype=int)
+        route_ids = np.asarray(result.route_id, dtype=int)
         values = np.asarray(result.position, dtype=float)
-        if vectors.ndim != 2 or len(vectors) != len(highway_ids):
+        if vectors.ndim != 2 or len(vectors) != len(route_ids):
             return
 
         for route in range(len(self.model.routes_)):
-            member_indices = np.flatnonzero(highway_ids == route)
+            member_indices = np.flatnonzero(route_ids == route)
             members = vectors[member_indices]
             if len(members) < 2:
                 continue
