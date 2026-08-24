@@ -120,14 +120,14 @@ def one_nn_accuracy_2d(coordinates, labels):
 
 
 def _plot_splines_in_pca(ax, model, reducer, color="black"):
-    for spline in model.splines_:
+    for spline in model.routes_:
         curve = spline.samples * model.scale_ + model.mean_
         curve = reducer.transform(curve)
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
         ax.plot(curve[:, 0], curve[:, 1], color=color, linewidth=2.0, alpha=0.9)
-    junctions = np.asarray([model.graph_.nodes[node] for node in model.junction_nodes_])
-    endpoints = np.asarray([model.graph_.nodes[node] for node in model.endpoint_nodes_])
+    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in model.junctions_])
+    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in model.endpoints_])
     if len(junctions):
         ax.scatter(*reducer.transform(junctions * model.scale_ + model.mean_).T,
                    color="red", s=38, zorder=4, label="junction")
@@ -168,14 +168,14 @@ def plot_expression_panels(fig, axes, embedding, expression, gene_names, marker_
 
 
 def plot_graph_coordinate_embedding(ax, result, labels, order, palette):
-    """Plot the model's intrinsic (highway, t) coordinates."""
-    highway = result["highway_id"]
-    jitter = np.random.default_rng(42).normal(0.0, 0.07, len(highway))
-    scatter_categories(ax, np.column_stack([result["t"], highway + jitter]), labels,
+    """Plot the model's intrinsic (route, t) coordinates."""
+    route = result.route_id
+    jitter = np.random.default_rng(42).normal(0.0, 0.07, len(route))
+    scatter_categories(ax, np.column_stack([result.position, route + jitter]), labels,
                        order, palette, size=8, alpha=0.42)
-    ax.set_xlabel("position along spline highway (t)")
-    ax.set_ylabel("highway id")
-    ax.set_yticks(sorted(set(highway)))
+    ax.set_xlabel("position along spline route (t)")
+    ax.set_ylabel("route id")
+    ax.set_yticks(sorted(set(route)))
     ax.set_aspect("auto")
 
 

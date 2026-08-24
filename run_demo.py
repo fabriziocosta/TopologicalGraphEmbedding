@@ -8,17 +8,17 @@ from pathlib import Path
 
 import numpy as np
 
-from synthetic_datasets import generate_datasets
-from topological_spline_graph import TopologicalSplineGraph
+from topological_graph_embedding.datasets import generate_synthetic_datasets
+from topological_graph_embedding import SplineGraphEmbedding
 
 
 def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, random_state: int = 0) -> list[dict[str, object]]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    datasets = generate_datasets(n=n, noise=noise, random_state=random_state)
+    datasets = generate_synthetic_datasets(n=n, noise=noise, random_state=random_state)
     rows: list[dict[str, object]] = []
     for index, (name, points) in enumerate(datasets.items()):
-        model = TopologicalSplineGraph(
+        model = SplineGraphEmbedding(
             n_centroids=32,
             persistence_threshold=None,
             spline_smoothing=0.02,
@@ -34,11 +34,11 @@ def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, 
         rows.append(
             {
                 "dataset": name,
-                "inferred_cycles": model.cycle_count_,
+                "inferred_cycles": model.realized_cycle_count_,
                 "persistent_h1_bars": len(model.persistence_diagram_),
-                "junctions": len(model.junction_nodes_),
-                "endpoints": len(model.endpoint_nodes_),
-                "spline_chains": len(model.splines_),
+                "junctions": len(model.junctions_),
+                "endpoints": len(model.endpoints_),
+                "spline_chains": len(model.routes_),
                 "median_projection_residual": float(np.median(transformed["residual_norm"])),
                 "figure": str(figure_path),
             }

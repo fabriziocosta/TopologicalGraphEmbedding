@@ -16,7 +16,7 @@ if __package__:
 else:
     from notebooks.dimensionality_reduction import fit_reducer
     from notebooks.spline_visualization import evaluate_route_target, plot_embedding_row
-from topological_graph_embedding.topological_spline_graph import TopologicalSplineGraph
+from topological_graph_embedding import SplineGraphEmbedding
 
 
 def _sample_dataset(points, labels, n, random_state):
@@ -63,7 +63,7 @@ def fit_datasets(
     embeddings = {}
     summary = []
     for index, (name, (points, labels)) in enumerate(datasets.items()):
-        model = TopologicalSplineGraph(
+        model = SplineGraphEmbedding(
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
@@ -91,11 +91,11 @@ def fit_datasets(
         summary.append({
             'dataset': name,
             'dimensions': points.shape[1],
-            'cycles': model.cycle_count_,
-            'junctions': len(model.junction_nodes_),
-            'endpoints': len(model.endpoint_nodes_),
-            'spline_chains': len(model.splines_),
-            'median_residual': float(np.median(result['residual_norm'])),
+            'cycles': model.realized_cycle_count_,
+            'junctions': len(model.junctions_),
+            'endpoints': len(model.endpoints_),
+            'spline_chains': len(model.routes_),
+            'median_residual': float(np.median(result.residual_norm)),
             'score_type': score_label,
             'route_score': (
                 float(np.nanmean([metric[score_key] for metric in valid_metrics]))
@@ -230,7 +230,7 @@ def display_interactive_controls(datasets):
         points, labels = datasets[name]
         threshold = None if threshold_mode.value == 'auto' else threshold_slider.value
         merge_distance = None if merge_slider.value == 0 else merge_slider.value
-        model = TopologicalSplineGraph(
+        model = SplineGraphEmbedding(
             n_centroids=centroid_slider.value,
             persistence_threshold=threshold,
             spline_smoothing=smoothing_slider.value,
@@ -275,11 +275,11 @@ def display_interactive_controls(datasets):
         )
         metrics = {
             'dimensions': points.shape[1],
-            'cycles': model.cycle_count_,
-            'junctions': len(model.junction_nodes_),
-            'endpoints': len(model.endpoint_nodes_),
-            'chains': len(model.splines_),
-            'median_residual': float(np.median(result['residual_norm'])),
+            'cycles': model.realized_cycle_count_,
+            'junctions': len(model.junctions_),
+            'endpoints': len(model.endpoints_),
+            'chains': len(model.routes_),
+            'median_residual': float(np.median(result.residual_norm)),
             'score_type': score_label,
             'route_score': [
                 metric[score_key] for metric in valid_metrics

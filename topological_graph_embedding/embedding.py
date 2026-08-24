@@ -181,8 +181,6 @@ class SplineGraphEmbedding:
                 self.route_chains_ = [{"nodes": [nodes[0]], "closed": False}]
         for chain in self.route_chains_:
             chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
-            if self.linear_structure_:
-                chain["points"] = _project_to_principal_line(chain["points"])
         self.routes_ = [
             _fit_curve(
                 chain["points"],
@@ -357,4 +355,3 @@ class SplineGraphEmbedding:
 
 
 __all__ = ["SplineGraphEmbedding"]
-

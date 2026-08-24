@@ -15,8 +15,8 @@ from sklearn.metrics import accuracy_score
 from sklearn.utils.multiclass import type_of_target
 from scipy.stats import spearmanr
 
-from topological_graph_embedding.metro_layout import MetroSplineLayout
-from topological_graph_embedding.topological_spline_graph import spline_normal_coordinates
+from topological_graph_embedding.metro import MetroLayout
+from topological_graph_embedding import SplineGraphEmbedding
 
 
 _REGRESSION_CMAP = LinearSegmentedColormap.from_list(
@@ -53,8 +53,8 @@ def evaluate_route_classification(
         target = target[:, 0]
     if target.ndim != 1:
         return []
-    highway_ids = np.asarray(result['highway_id'], dtype=int)
-    if len(target) != len(highway_ids):
+    route_ids = np.asarray(result.route_id, dtype=int)
+    if len(target) != len(route_ids):
         raise ValueError('labels and result must contain the same number of observations')
     if _target_is_continuous(target):
         return []
@@ -68,8 +68,8 @@ def evaluate_route_classification(
         return []
     chance = 0.0 if n_global_classes == 1 else 1.0 / n_global_classes
 
-    normal_coordinates = spline_normal_coordinates(model, result)
-    longitudinal = np.asarray(result['t'], dtype=float).reshape(-1, 1)
+    normal_coordinates = model.normal_coordinates(result)
+    longitudinal = np.asarray(result.position, dtype=float).reshape(-1, 1)
     coordinates = (
         np.column_stack([longitudinal, normal_coordinates])
         if normal_coordinates.shape[1]
@@ -87,12 +87,12 @@ def evaluate_route_classification(
 
     metrics = []
     splitter = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    for route in range(len(model.splines_)):
-        members = np.flatnonzero(highway_ids == route)
+    for route in range(len(model.routes_)):
+        members = np.flatnonzero(route_ids == route)
         route_target = target[members]
         classes, counts = np.unique(route_target, return_counts=True)
         metric = {
-            'highway_id': route,
+            'route_id': route,
             'n_samples': int(len(members)),
             'n_classes': int(len(classes)),
             'n_splits': int(n_splits),
@@ -163,8 +163,8 @@ def evaluate_route_regression(
         target = target[:, 0]
     if target.ndim != 1:
         return []
-    highway_ids = np.asarray(result['highway_id'], dtype=int)
-    if len(target) != len(highway_ids):
+    route_ids = np.asarray(result.route_id, dtype=int)
+    if len(target) != len(route_ids):
         raise ValueError('targets and result must contain the same number of observations')
     if not np.all(np.isfinite(target)):
         return []
@@ -173,7 +173,7 @@ def evaluate_route_regression(
     if n_splits < 2:
         raise ValueError('n_splits must be at least 2')
 
-    normal_coordinates = spline_normal_coordinates(model, result)
+    normal_coordinates = model.normal_coordinates(result)
     if normal_coordinates.shape[1] == 0:
         return []
     base_regressor = (
@@ -188,10 +188,10 @@ def evaluate_route_regression(
 
     metrics = []
     splitter = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    for route in range(len(model.splines_)):
-        members = np.flatnonzero(highway_ids == route)
+    for route in range(len(model.routes_)):
+        members = np.flatnonzero(route_ids == route)
         metric = {
-            'highway_id': route,
+            'route_id': route,
             'n_samples': int(len(members)),
             'n_splits': int(n_splits),
             'valid': False,
@@ -267,7 +267,7 @@ def _target_scatter(axis, x, y, labels, **kwargs):
 
 def spline_colors(model: Any) -> np.ndarray:
     """Return stable route colors shared by every display mode."""
-    count = max(1, len(model.splines_))
+    count = max(1, len(model.routes_))
     return plt.get_cmap('tab20', count)(np.arange(count))
 
 
@@ -276,7 +276,7 @@ def plot_labeled_graph(axis, points, labels, model, title, colors=None):
     if colors is None:
         colors = spline_colors(model)
     _target_scatter(axis, points[:, 0], points[:, 1], labels, s=10, alpha=0.30)
-    for index, spline in enumerate(model.splines_):
+    for index, spline in enumerate(model.routes_):
         curve = spline.samples * model.scale_ + model.mean_
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
@@ -297,7 +297,7 @@ def plot_projected_graph(axis, points, labels, model, title, reducer, colors=Non
         axis, displayed_points[:, 0], displayed_points[:, 1], labels,
         s=10, alpha=0.30,
     )
-    for index, spline in enumerate(model.splines_):
+    for index, spline in enumerate(model.routes_):
         curve = spline.samples * model.scale_ + model.mean_
         curve = reducer.transform(curve)
         if spline.closed:
@@ -329,23 +329,23 @@ def _metric_value(metric, name):
 
 
 def _plot_route_score_pies(axis, model, route_metrics):
-    """Place one normalized route score just beyond ``t=1`` per highway."""
+    """Place one normalized route score just beyond ``t=1`` per route."""
     if route_metrics is None:
         return
     if isinstance(route_metrics, dict):
         by_route = route_metrics
     else:
         by_route = {
-            metric.get('highway_id', route): metric
+            metric.get('route_id', route): metric
             for route, metric in enumerate(route_metrics)
         }
     if not by_route:
         return
 
     # The bounds are in the graph embedding's data coordinates, so each inset
-    # stays attached to its highway row when the figure is resized. Correct
+    # stays attached to its route row when the figure is resized. Correct
     # the y extent for the axis data aspect; a square data box would otherwise
-    # be rendered as a very flat rectangle when there are many highway rows.
+    # be rendered as a very flat rectangle when there are many route rows.
     is_regression = any(
         isinstance(metric, dict) and 'rank_correlation' in metric
         for metric in by_route.values()
@@ -357,7 +357,7 @@ def _plot_route_score_pies(axis, model, route_metrics):
     x_offset = axis.transData.transform((pie_width, 0.0))[0] - origin[0]
     y_offset = axis.transData.transform((0.0, 1.0))[1] - origin[1]
     pie_height = abs(x_offset) / max(abs(y_offset), 1e-12)
-    for route in range(len(model.splines_)):
+    for route in range(len(model.routes_)):
         metric = by_route.get(route)
         value = _metric_value(metric, metric_name)
         if value is None:
@@ -390,25 +390,25 @@ def plot_graph_embedding(
     if route_metrics is None:
         route_metrics = classification_metrics
     colors = np.asarray(colors)
-    graph_coordinate = result['highway_id'] + 0.08 * np.random.default_rng(jitter_seed).normal(
-        size=len(result['t'])
+    graph_coordinate = result.route_id + 0.08 * np.random.default_rng(jitter_seed).normal(
+        size=len(result.position)
     )
     _target_scatter(
-        axis, result['t'], graph_coordinate, labels, s=10, alpha=0.45,
+        axis, result.position, graph_coordinate, labels, s=10, alpha=0.45,
     )
-    highway_rows = np.arange(len(model.splines_))
-    closed = np.asarray([spline.closed for spline in model.splines_], dtype=bool)
+    route_rows = np.arange(len(model.routes_))
+    closed = np.asarray([spline.closed for spline in model.routes_], dtype=bool)
     for marker, mask in (('s', ~closed), ('o', closed)):
         if np.any(mask):
             axis.scatter(
-                np.full(np.count_nonzero(mask), -0.045), highway_rows[mask],
+                np.full(np.count_nonzero(mask), -0.045), route_rows[mask],
                 c=colors[mask], marker=marker, s=55,
                 edgecolors='black', linewidths=0.5, zorder=4,
             )
     axis.set_title(title)
     axis.set_xlabel('longitudinal coordinate t')
-    axis.set_ylabel('highway id')
-    axis.set_yticks(highway_rows)
+    axis.set_ylabel('route id')
+    axis.set_yticks(route_rows)
     has_metrics = route_metrics is not None and len(route_metrics) > 0
     axis.set_xlim(-0.09, 1.16 if has_metrics else 1.0)
     _plot_route_score_pies(axis, model, route_metrics)
@@ -425,8 +425,8 @@ def _plot_metro_stations(axis, model, layout):
     station_positions = layout.node_positions()
     # Junction stations are drawn in data coordinates so their size remains
     # meaningful as the map is zoomed.  Routes have already been clipped to
-    # these circumferences by MetroSplineLayout.
-    for node in model.junction_nodes_:
+    # these circumferences by MetroLayout.
+    for node in model.junctions_:
         if node not in station_positions:
             continue
         radius = layout.junction_radii_.get(node, 0.72)
@@ -441,7 +441,7 @@ def _plot_metro_stations(axis, model, layout):
             )
         )
     endpoints = np.asarray([
-        station_positions[node] for node in model.endpoint_nodes_ if node in station_positions
+        station_positions[node] for node in model.endpoints_ if node in station_positions
     ])
     if len(endpoints):
         axis.scatter(
@@ -453,11 +453,11 @@ def _plot_metro_stations(axis, model, layout):
 def plot_metro_lines(axis, model, title, layout=None, colors=None):
     """Plot only metro routes and their station markers."""
     if layout is None:
-        layout = MetroSplineLayout(model, random_state=0).fit()
+        layout = MetroLayout(model, random_state=0).fit()
     if colors is None:
         colors = spline_colors(model)
     for index, curve in enumerate(layout.transform_splines()):
-        if model.splines_[index].closed:
+        if model.routes_[index].closed:
             curve = np.vstack([curve, curve[0]])
         axis.plot(
             curve[:, 0], curve[:, 1],
@@ -478,12 +478,12 @@ def plot_metro_points(
     route-colored outlines keep the spline assignment visible as well.
     """
     if layout is None:
-        layout = MetroSplineLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(model, random_state=0).fit(result)
     displayed_points = layout.transform_points(result)
     if colors is None:
         colors = spline_colors(model)
-    highway_ids = np.asarray(result['highway_id'], dtype=int)
-    route_edges = colors[np.clip(highway_ids, 0, len(colors) - 1)]
+    route_ids = np.asarray(result.route_id, dtype=int)
+    route_edges = colors[np.clip(route_ids, 0, len(colors) - 1)]
     _target_scatter(
         axis, displayed_points[:, 0], displayed_points[:, 1], labels,
         s=14, alpha=0.60, edgecolors=route_edges, linewidths=0.4, zorder=2,
@@ -496,7 +496,7 @@ def plot_metro_points(
 def plot_metro_graph(axis, labels, model, result, title, layout=None, colors=None):
     """Plot the combined metro routes, observations, and stations."""
     if layout is None:
-        layout = MetroSplineLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(model, random_state=0).fit(result)
     if colors is None:
         colors = spline_colors(model)
     plot_metro_points(axis, labels, model, result, title, layout=layout, colors=colors)
@@ -544,7 +544,7 @@ def plot_embedding_row(
         route_metrics=route_metrics,
     )
     if layout is None:
-        layout = MetroSplineLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(model, random_state=0).fit(result)
     plot_metro_lines(
         axes[2], model, metro_lines_title, layout=layout, colors=colors,
     )
@@ -556,8 +556,8 @@ def plot_embedding_row(
 
 
 def _plot_stations(axis, model, transform):
-    junctions = np.asarray([model.graph_.nodes[node] for node in model.junction_nodes_])
-    endpoints = np.asarray([model.graph_.nodes[node] for node in model.endpoint_nodes_])
+    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in model.junctions_])
+    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in model.endpoints_])
     if len(junctions):
         junctions = transform(junctions)
         axis.scatter(

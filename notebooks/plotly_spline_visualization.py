@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     go = None
     qualitative = None
 
-from topological_graph_embedding.metro_layout import MetroSplineLayout
+from topological_graph_embedding.metro import MetroLayout
 if __package__:
     from .spline_visualization import spline_colors
 else:
@@ -43,7 +43,7 @@ def _label_groups(labels: Any, count: int) -> list[tuple[str, np.ndarray]]:
         return [("observations", np.ones(count, dtype=bool))]
     values = np.asarray(labels)
     if len(values) != count:
-        raise ValueError("labels must have the same length as result['t']")
+        raise ValueError("labels must have the same length as result.position")
     unique = list(dict.fromkeys(values.tolist()))
     return [(str(value), values == value) for value in unique]
 
@@ -52,7 +52,7 @@ def plot_spline_3d(
     model: Any,
     result: dict[str, np.ndarray],
     labels: Any = None,
-    layout: MetroSplineLayout | None = None,
+    layout: MetroLayout | None = None,
     colors: np.ndarray | None = None,
     title: str = "Spline graph: metro plane + local residual plane",
     z_scale: float = 1.0,
@@ -70,16 +70,16 @@ def plot_spline_3d(
     if z_scale <= 0.0:
         raise ValueError("z_scale must be positive")
     if layout is None:
-        layout = MetroSplineLayout(model, random_state=0).fit(result)
+        layout = MetroLayout(model, random_state=0).fit(result)
     points = layout.transform_points_3d(result)
     points[:, 2] *= float(z_scale)
-    highway_ids = np.asarray(result["highway_id"], dtype=int)
-    values = np.asarray(result["t"], dtype=float)
-    residual_norm = np.asarray(result.get("residual_norm", np.zeros(len(values))), dtype=float)
+    route_ids = np.asarray(result.route_id, dtype=int)
+    values = np.asarray(result.position, dtype=float)
+    residual_norm = np.asarray(result.residual_norm, dtype=float)
     count = len(values)
 
     route_colors = spline_colors(model) if colors is None else np.asarray(colors)
-    if len(route_colors) < len(model.splines_):
+    if len(route_colors) < len(model.routes_):
         raise ValueError("colors must contain at least one color per spline")
 
     figure = go.Figure()
@@ -88,7 +88,7 @@ def plot_spline_3d(
     raw_labels = np.zeros(count, dtype=object) if labels is None else np.asarray(labels)
     customdata = np.column_stack([
         raw_labels,
-        highway_ids,
+        route_ids,
         values,
         residual_norm,
     ])
@@ -116,7 +116,7 @@ def plot_spline_3d(
         )
 
     for route, curve in enumerate(layout.transform_splines()):
-        if model.splines_[route].closed:
+        if model.routes_[route].closed:
             curve = np.vstack([curve, curve[0]])
         figure.add_trace(
             go.Scatter3d(
@@ -134,10 +134,10 @@ def plot_spline_3d(
     if show_nodes:
         stations = layout.node_positions()
         junctions = np.asarray([
-            stations[node] for node in model.junction_nodes_ if node in stations
+            stations[node] for node in model.junctions_ if node in stations
         ])
         endpoints = np.asarray([
-            stations[node] for node in model.endpoint_nodes_ if node in stations
+            stations[node] for node in model.endpoints_ if node in stations
         ])
         if len(junctions):
             figure.add_trace(

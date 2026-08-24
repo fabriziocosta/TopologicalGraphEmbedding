@@ -10,8 +10,8 @@ if __package__:
     from .spline_visualization import plot_embedding_row
 else:
     from notebooks.spline_visualization import plot_embedding_row
-from topological_graph_embedding.synthetic_datasets import generate_datasets, noisy_hypercube
-from topological_graph_embedding.topological_spline_graph import TopologicalSplineGraph
+from topological_graph_embedding.datasets import generate_synthetic_datasets, noisy_hypercube
+from topological_graph_embedding import SplineGraphEmbedding
 
 
 def build_datasets(
@@ -22,7 +22,7 @@ def build_datasets(
     random_state=0,
 ):
     """Build the 2D synthetic datasets and the noisy hypercube dataset."""
-    datasets = generate_datasets(n=n, noise=noise, random_state=random_state)
+    datasets = generate_synthetic_datasets(n=n, noise=noise, random_state=random_state)
     datasets['hypercube'] = noisy_hypercube(
         n=n,
         dim=hypercube_dim,
@@ -45,7 +45,7 @@ def fit_datasets(
     summary = []
 
     for index, (name, points) in enumerate(datasets.items()):
-        model = TopologicalSplineGraph(
+        model = SplineGraphEmbedding(
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
@@ -56,10 +56,10 @@ def fit_datasets(
         projections[name] = model.transform(points)
         summary.append({
             'dataset': name,
-            'cycles': model.cycle_count_,
-            'junctions': len(model.junction_nodes_),
-            'endpoints': len(model.endpoint_nodes_),
-            'spline_chains': len(model.splines_),
+            'cycles': model.realized_cycle_count_,
+            'junctions': len(model.junctions_),
+            'endpoints': len(model.endpoints_),
+            'spline_chains': len(model.routes_),
             'median_residual': float(np.median(projections[name]['residual_norm'])),
         })
     return models, projections, summary
@@ -126,7 +126,7 @@ def run_static_demo(
         )
 
     figure.suptitle(
-        'Synthetic distributions embedded with spline highways', fontsize=16, y=0.995,
+        'Synthetic distributions embedded with spline routes', fontsize=16, y=0.995,
     )
     figure.tight_layout()
     figure_dir = project_root / 'notebooks' / 'figures'
@@ -191,7 +191,7 @@ def display_interactive_controls(datasets):
         points = datasets[name]
         threshold = None if threshold_mode.value == 'auto' else threshold_slider.value
         merge_distance = None if merge_slider.value == 0 else merge_slider.value
-        model = TopologicalSplineGraph(
+        model = SplineGraphEmbedding(
             n_centroids=centroid_slider.value,
             persistence_threshold=threshold,
             spline_smoothing=smoothing_slider.value,
@@ -219,11 +219,11 @@ def display_interactive_controls(datasets):
         plt.close(figure)
         plot_output.value = image_buffer.getvalue()
         metrics = {
-            'cycles': model.cycle_count_,
-            'junctions': len(model.junction_nodes_),
-            'endpoints': len(model.endpoint_nodes_),
-            'chains': len(model.splines_),
-            'median_residual': float(np.median(result['residual_norm'])),
+            'cycles': model.realized_cycle_count_,
+            'junctions': len(model.junctions_),
+            'endpoints': len(model.endpoints_),
+            'chains': len(model.routes_),
+            'median_residual': float(np.median(result.residual_norm)),
         }
         metrics_output.value = f'<pre>{escape(str(metrics))}</pre>'
 
