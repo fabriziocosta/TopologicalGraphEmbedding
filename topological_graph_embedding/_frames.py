@@ -115,7 +115,7 @@ def _frame_from_grid(grid: dict[str, Any], t: float, tangent: Array, closed: boo
     return frame
 
 
-def spline_normal_frames(model: Any, result: dict[str, Array]) -> Array:
+def _normal_frames(model: Any, result: Any) -> Array:
     """Return one orthonormal normal frame for every projected observation.
 
     The returned array has shape ``(n_samples, n_features, n_features - 1)``.
@@ -176,15 +176,14 @@ def spline_normal_frames(model: Any, result: dict[str, Array]) -> Array:
     return frames
 
 
-def spline_normal_coordinates(model: Any, result: dict[str, Array]) -> Array:
+def _normal_coordinates(model: Any, result: Any) -> Array:
     """Project residuals into the local spline-normal hyperplane coordinates."""
     residual = np.asarray(result.residual, dtype=float)
     scale = np.asarray(getattr(model, "scale_", np.ones(residual.shape[1])), dtype=float)
     residual_scaled = residual / scale
-    frames = spline_normal_frames(model, result)
+    frames = _normal_frames(model, result)
     if frames.shape[2] == 0:
         return np.empty((len(residual), 0), dtype=float)
     return np.einsum("ni,nij->nj", residual_scaled, frames)
-
 
 

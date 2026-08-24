@@ -23,6 +23,22 @@ class EmbeddingResult:
     tangent: np.ndarray
 
     def __post_init__(self) -> None:
+        route_id = np.asarray(self.route_id, dtype=int)
+        position = np.asarray(self.position, dtype=float)
+        projected = np.asarray(self.projected, dtype=float)
+        residual = np.asarray(self.residual, dtype=float)
+        residual_norm = np.asarray(self.residual_norm, dtype=float)
+        tangent = np.asarray(self.tangent, dtype=float)
+        for name, value in (
+            ("route_id", route_id),
+            ("position", position),
+            ("projected", projected),
+            ("residual", residual),
+            ("residual_norm", residual_norm),
+            ("tangent", tangent),
+        ):
+            value.setflags(write=False)
+            object.__setattr__(self, name, value)
         if self.route_id.ndim != 1 or self.position.ndim != 1:
             raise ValueError("route_id and position must be one-dimensional")
         if self.projected.ndim != 2 or self.residual.ndim != 2 or self.tangent.ndim != 2:

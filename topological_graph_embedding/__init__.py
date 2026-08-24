@@ -1,17 +1,9 @@
 """Public package for topological spline graph embeddings."""
 
-from .topological_spline_graph import (
-    SkeletonGraph,
-    SplineCurve,
-    TopologicalSplineGraph,
-    spline_normal_coordinates,
-    spline_normal_frames,
-)
+from .embedding import SplineGraphEmbedding
+from .results import EmbeddingResult
 
 __all__ = [
-    "SkeletonGraph",
-    "SplineCurve",
-    "TopologicalSplineGraph",
-    "spline_normal_coordinates",
-    "spline_normal_frames",
+    "EmbeddingResult",
+    "SplineGraphEmbedding",
 ]

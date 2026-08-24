@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from typing import Any, Sequence
+import warnings
 
 import numpy as np
 
 from ._curves import _SCIPY_IMPORT_ERROR, _fit_curve
 from ._frames import (
     _fit_normal_frame_grid,
-    spline_normal_coordinates as _spline_normal_coordinates,
+    _normal_coordinates,
 )
 from ._topology import (
     _as_point_cloud,
@@ -122,14 +123,20 @@ class SplineGraphEmbedding:
         self.requested_cycle_count_ = min(self.max_cycles, self.persistent_cycle_count_)
 
         self.centroids_ = _kmeans(points, self.n_centroids, self.random_state)
-        self.linear_structure_ = _is_nearly_linear(self.centroids_, self.linear_structure_tolerance)
+        # Structure detection is evaluated in the original metric.  This is
+        # important for noisy one-dimensional clouds: feature standardization
+        # can otherwise turn small orthogonal noise into an artificial branch.
+        centroids_original = self.centroids_ * scale + mean
+        self.linear_structure_ = _is_nearly_linear(
+            centroids_original, self.linear_structure_tolerance
+        )
         if self.linear_structure_:
             # A noisy sample of a line can produce a branched MST and a
             # borderline H1 bar.  A PCA-ordered chain is the appropriate
             # low-complexity skeleton for this geometry.
             self.requested_cycle_count_ = 0
             self.merge_junction_distance_ = 0.0
-            graph = _ordered_path_graph(self.centroids_)
+            graph = _ordered_path_graph(self.centroids_, ordering_points=centroids_original)
         else:
             graph = _minimum_spanning_tree(self.centroids_)
             if self.prune_short_branches:
@@ -241,7 +248,7 @@ class SplineGraphEmbedding:
         _, left, right, direct = best
         return left, right, direct
 
-    def transform(self, X: Array | Sequence[Sequence[float]]) -> dict[str, Array]:
+    def transform(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         if not self._fitted:
             raise RuntimeError("Call fit before transform")
         original = _as_point_cloud(X)
@@ -272,20 +279,27 @@ class SplineGraphEmbedding:
             members = np.flatnonzero(route_id == highway)
             if len(members):
                 tangent[members] = spline.tangent(t[members])
-        result = {
-            "route_id": route_id,
-            "t": t,
-            "projection": projected_original,
-            "residual": residual,
-            "residual_norm": np.linalg.norm(residual, axis=1),
+        return EmbeddingResult(
+            route_id=route_id,
+            position=t,
+            projected=projected_original,
+            residual=residual,
+            residual_norm=np.linalg.norm(residual, axis=1),
             # Tangents are stored in the standardized fitting coordinates so
             # they can define the correct high-dimensional normal hyperplane.
-            "tangent": tangent,
-        }
-        return result
+            tangent=tangent,
+        )
 
-    def fit_transform(self, X: Array | Sequence[Sequence[float]]) -> dict[str, Array]:
+    def fit_transform(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         return self.fit(X).transform(X)
+
+    def normal_coordinates(self, result: EmbeddingResult) -> Array:
+        """Return residual coordinates in deterministic route-normal frames."""
+        if not isinstance(result, EmbeddingResult):
+            raise TypeError("result must be an EmbeddingResult")
+        if result.n_features != self.n_features_in_:
+            raise ValueError("result has a different number of features than the fitted data")
+        return _normal_coordinates(self, result)
 
     def plot_network(
         self,
@@ -299,7 +313,7 @@ class SplineGraphEmbedding:
         if not self._fitted:
             raise RuntimeError("Call fit before plot_network")
         if self.n_features_in_ != 2:
-            raise ValueError("plot is only available for two-dimensional data")
+            raise ValueError("plot_network is only available for two-dimensional data")
         try:
             import matplotlib.pyplot as plt
         except ImportError as exc:  # pragma: no cover - depends on environment.
@@ -341,4 +355,6 @@ class SplineGraphEmbedding:
         ax.legend(loc="best", fontsize=8)
         return ax
 
+
+__all__ = ["SplineGraphEmbedding"]
 
