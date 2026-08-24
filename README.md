@@ -1,82 +1,66 @@
-# Topological graph embedding prototype
+# Topological graph embedding
 
-The prototype fits a compact graph of smooth spline highways to a noisy point
-cloud. It estimates the number of H1 cycles, clusters observations into graph
-landmarks, builds an MST, adds cycle-closing edges, fits open or periodic
-splines, and projects every observation onto the resulting network.
+This package fits a smooth spline route network to a noisy point cloud. It
+builds a sparse landmark kNN topology, fits open or closed spline routes, and
+projects observations into a typed embedding result.
 
-Install the recommended dependencies and run the benchmark:
+Install the core package and development tools with:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev,notebooks]"
+```
+
+Run the demo with:
+
+```bash
 python run_demo.py --output-dir outputs
 ```
 
-The demo writes one PNG per synthetic data set and `outputs/summary.csv`.
-
-For an interactive comparison of the line, Y, X, circle, figure-eight,
-branching tree, loop-with-branch, and a noisy 4D hypercube, open
-[`notebooks/visualize_synthetic_distributions.ipynb`](notebooks/visualize_synthetic_distributions.ipynb).
-
-For scikit-learn toy distributions and their graph-coordinate embeddings, open
-[`notebooks/visualize_sklearn_toy_datasets.ipynb`](notebooks/visualize_sklearn_toy_datasets.ipynb).
-
-For real higher-dimensional scikit-learn datasets (digits, wine, breast cancer,
-and diabetes), open
-[`notebooks/visualize_high_dim_sklearn_datasets.ipynb`](notebooks/visualize_high_dim_sklearn_datasets.ipynb).
-That notebook includes a UMAP projection by default (with PCA available as an
-alternative), longitudinal-coordinate, and metro-map views. In the map view,
-observations are placed along their assigned spline and offset laterally by a
-robust residual distance. The default lateral side uses a locally smoothed PCA
-frame of residuals along each spline; use ``MetroSplineLayout(...,
-residual_frame="route_pca")`` for a single route-wide frame.
-
-For an interactive 3D view of the digits data, open
-[`notebooks/visualize_digits_3d.ipynb`](notebooks/visualize_digits_3d.ipynb).
-The spline map stays on `z=0`; the first two local residual PCA coordinates
-place observations laterally and vertically around their assigned spline.
-
-For the Paul et al. mouse bone-marrow single-cell experiment, open
-[`notebooks/visualize_paul_single_cell.ipynb`](notebooks/visualize_paul_single_cell.ipynb).
-The notebook downloads and caches the public `paul15.h5` file outside the
-repository, applies standard label-free single-cell preprocessing, and fits
-the topological graph embedding.
-
-Minimal API usage:
+## Core API
 
 ```python
-from topological_spline_graph import TopologicalSplineGraph
+from topological_graph_embedding import SplineGraphEmbedding
 
-model = TopologicalSplineGraph(n_centroids=32, random_state=0)
+model = SplineGraphEmbedding(n_centroids=32, random_state=0)
 result = model.fit_transform(X)
-print(model.cycle_count_)
-print(result["projection"], result["residual_norm"])
+
+print(model.realized_cycle_count_)
+print(result.projected, result.residual_norm)
+normal = model.normal_coordinates(result)
+model.plot_network(X, show_projections=True)
 ```
 
-For a scikit-learn transformer or a spline-aware classifier:
+`result` is a frozen `EmbeddingResult` with the fields `route_id`,
+`position`, `projected`, `residual`, `residual_norm`, and `tangent`. Results are
+attribute-based and do not support dictionary indexing.
+
+Fitted topology diagnostics include `persistent_cycle_count_`,
+`requested_cycle_count_`, `realized_cycle_count_`, `topology_shortfall_`,
+`persistence_backend_`, `route_backends_`, `routes_`, `route_chains_`,
+`junctions_`, and `endpoints_`.
+
+The optional sklearn adapters are available from `topological_graph_embedding.sklearn`:
 
 ```python
-from spline_sklearn import SplineGraphClassifier, SplineGraphTransformer
+from topological_graph_embedding.sklearn import (
+    SplineEmbeddingClassifier,
+    SplineEmbeddingTransformer,
+)
 
-embedding = SplineGraphTransformer(n_centroids=32, random_state=0)
-X_graph = embedding.fit_transform(X)
+embedding = SplineEmbeddingTransformer(n_centroids=32, random_state=0)
+X_route = embedding.fit_transform(X)
+result = embedding.transform_result(X)
 
-model = SplineGraphClassifier(n_centroids=32, random_state=0)
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
+classifier = SplineEmbeddingClassifier(n_centroids=32, random_state=0)
+classifier.fit(X_train, y_train)
+y_pred = classifier.predict(X_test)
 ```
 
-The classifier assigns every observation to its closest spline and gives the
-downstream estimator the spline identity, longitudinal coordinate, and
-residual coordinates expressed in the local hyperplane perpendicular to the
-spline.  Thus points with the same longitudinal coordinate can still be
-separated by which spline they occupy and by their off-spline displacement.
-Pass any compatible sklearn classifier through `classifier=`; the default is
-`RandomForestClassifier`.
+Pass a downstream sklearn estimator through `estimator=`. The metro layout,
+synthetic datasets, and plotting helpers are optional modules under
+`topological_graph_embedding.metro`, `topological_graph_embedding.datasets`,
+and the `notebooks` package.
 
-The high-dimensional dataset notebook scores categorical routes by normalized
-out-of-fold multiclass accuracy using the longitudinal and spline-normal
-coordinates, so random assignment is 0 and perfect prediction is 1. A route
-with one class is explicitly perfect. Regression routes show one Spearman
-rank-correlation score. Continuous target plots use a pale-blue-to-ink-blue
-color scale.
+Synthetic data are generated with `generate_synthetic_datasets()`; the
+interactive notebooks in `notebooks/` import the installed package and keep
+no local copies of the implementation modules.

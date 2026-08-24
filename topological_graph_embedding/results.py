@@ -39,8 +39,8 @@ class EmbeddingResult:
         ):
             value.setflags(write=False)
             object.__setattr__(self, name, value)
-        if self.route_id.ndim != 1 or self.position.ndim != 1:
-            raise ValueError("route_id and position must be one-dimensional")
+        if self.route_id.ndim != 1 or self.position.ndim != 1 or self.residual_norm.ndim != 1:
+            raise ValueError("route_id, position, and residual_norm must be one-dimensional")
         if self.projected.ndim != 2 or self.residual.ndim != 2 or self.tangent.ndim != 2:
             raise ValueError("projected, residual, and tangent must be two-dimensional")
         count = len(self.route_id)

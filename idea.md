@@ -198,7 +198,7 @@ The curvature term discourages unnecessarily wiggly highways.
 
 Parameterize the input vertices by cumulative arc length before fitting.
 
-For open chains, fit an ordinary smoothing spline.
+For open routes, fit an ordinary smoothing spline.
 
 For a detected closed cycle, fit a **periodic spline** so there is no seam or overshoot at the closing point.
 
@@ -206,13 +206,13 @@ Expose the smoothing strength as a parameter.
 
 ## 9. Project every original observation onto the spline network
 
-Given all fitted spline highways
+Given all fitted spline routes
 
 $$
 \gamma_1,\ldots,\gamma_H,
 $$
 
-find the closest point on any highway to every observation \(x_i\).
+find the closest point on any route to every observation \(x_i\).
 
 Compute approximately
 
@@ -227,8 +227,8 @@ For the prototype, dense sampling of each spline is acceptable instead of contin
 
 Store:
 
-- `highway_id = h_i`
-- longitudinal spline coordinate `t_i`
+- `route_id = h_i`
+- longitudinal spline coordinate `position_i`
 - projected point
 
 $$
@@ -257,7 +257,7 @@ $$
 
 Interpretation:
 
-- \(h_i\): which manifold highway the observation belongs to
+- \(h_i\): which manifold route the observation belongs to
 - \(t_i\): position along the manifold
 - \(r_i\): local off-manifold displacement/noise
 
@@ -266,7 +266,7 @@ Interpretation:
 For 2D input data, produce plots containing:
 
 - original observations as faint points
-- fitted spline highways as thick smooth curves
+- fitted spline routes as thick smooth curves
 - junctions as prominent circles
 - endpoints as squares
 - optionally thin lines from a subset of observations to their spline projections
@@ -278,7 +278,7 @@ windows along each route only to choose a stable left/right orientation.  The
 residual norm should remain the displayed width: using only the first PCA
 score would collapse points whose noise is spread across several dimensions.
 
-The spline network should visually appear like a small set of smooth roads running through a noisy cloud.
+The spline network should visually appear like a small set of smooth routes running through a noisy cloud.
 
 ## 11. Synthetic test datasets
 
@@ -317,7 +317,7 @@ Use these expected results only for evaluation:
 Implement something approximately like:
 
 ```python
-class TopologicalSplineGraph:
+class SplineGraphEmbedding:
     def __init__(
         self,
         n_centroids=32,
@@ -337,30 +337,30 @@ class TopologicalSplineGraph:
     def fit_transform(self, X):
         ...
 
-    def plot(self, X=None):
+    def plot_network(self, X=None):
         ...
 ```
 
 After `fit`, expose useful attributes such as:
 
 ```python
-cycle_count_
+realized_cycle_count_
 persistence_diagram_
 centroids_
-graph_
-junction_nodes_
-endpoint_nodes_
-chains_
-splines_
+landmark_graph_
+junctions_
+endpoints_
+route_chains_
+routes_
 ```
 
 After `transform`, return or expose:
 
 ```python
-highway_id
-t
-projection
-residual_vector
+route_id
+position
+projected
+residual
 residual_norm
 ```
 

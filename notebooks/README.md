@@ -13,7 +13,7 @@ Press **Refit selected dataset** after changing the controls.
 
 `visualize_sklearn_toy_datasets.ipynb` applies the same model to scikit-learn's
 moons, circles, blobs, classification, and Gaussian-quantile generators. It
-shows the fitted graph beside the graph-coordinate embedding `(highway_id, t)`.
+shows the fitted graph beside the graph-coordinate embedding `(route_id, position)`.
 Its final cell also provides interactive controls for refitting one selected
 toy dataset.
 
@@ -51,10 +51,9 @@ Shared plotting logic for these notebooks lives in
 four-panel renderer. The metro-map point panel hides junction and endpoint
 markers by default; pass `show_metro_nodes=True` to display them.
 
-The `notebooks/` directory is self-contained: it includes local copies of
-`topological_spline_graph.py`, `metro_layout.py`, and `synthetic_datasets.py`.
-The notebook bootstrap adds this directory to the import path, so the
-notebooks do not depend on the repository root being the current directory.
+The notebooks import the installed `topological_graph_embedding` package. The
+notebook bootstrap adds the repository root to the import path for local
+development, but the package is the sole source of implementation code.
 
 Start Jupyter from either the repository root or this directory:
 
@@ -63,11 +62,11 @@ jupyter notebook notebooks/visualize_sklearn_toy_datasets.ipynb
 # or, from notebooks/: jupyter notebook visualize_sklearn_toy_datasets.ipynb
 ```
 
-For reusable sklearn pipelines, `spline_sklearn.py` provides
-`SplineGraphTransformer` and `SplineGraphClassifier`. The classifier combines
+For reusable sklearn pipelines, `topological_graph_embedding.sklearn` provides
+`SplineEmbeddingTransformer` and `SplineEmbeddingClassifier`. The classifier combines
 spline identity, longitudinal position, and residual coordinates in the local
 hyperplane perpendicular to each spline with a configurable downstream
-estimator; its default is a random forest. The high-dimensional dataset view
+estimator passed through `estimator=`; its default is a random forest. The high-dimensional dataset view
 adds one per-route score just past `t=1`: normalized out-of-fold multiclass
 accuracy from the route coordinates for categorical targets, or Spearman rank
 correlation for regression targets.
