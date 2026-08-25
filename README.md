@@ -45,22 +45,29 @@ route assignments or residuals learned in the original metric.
 
 ## How fitting works
 
-The estimator uses a coarse-to-fine pipeline:
+The estimator uses a selectable coarse-to-fine pipeline. The default
+`backbone_initialization="coarsen"` path retains the original landmark MST
+initializer. With `backbone_initialization="topological"`, the dense weighted
+observation kNN graph is treated as a routing substrate and the backbone is
+selected from explicit topology and connectivity constraints:
 
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.
-2. **Compress the observations.** A deterministic, blocked k-means procedure
-   produces at most `n_centroids` landmarks. The landmarks are used for graph
-   construction instead of building a dense graph over every observation.
-3. **Estimate topology.** Persistent homology in dimension 1 estimates how
-   many meaningful cycles are present. Ripser is used when available, with a
-   NumPy Vietoris–Rips fallback.
-4. **Build a sparse graph.** A minimum spanning tree provides connectivity.
-   Local edges from a symmetrized landmark k-nearest-neighbor graph are then
-   considered as cycle-closing candidates. Candidate edges are selected using
-   the contrast between their graph path length and direct geometric length.
-5. **Simplify the graph.** Degree-2 landmarks are collapsed into route chains;
-   short terminal branches may be pruned and nearby junctions merged.
+2. **Build the routing substrate.** Topological mode constructs a weighted,
+   symmetric observation kNN graph with Euclidean lengths and affinity-based
+   conductances. Coarsening mode instead continues with the existing
+   centroid graph.
+3. **Estimate topology and local geometry.** Persistent H1 estimates the
+   cycle rank. Multiscale annulus components identify junction and endpoint
+   regions, while local PCA estimates ordinary tangents and one outgoing
+   direction per junction arm.
+4. **Select the backbone.** Candidate landmark routes are scored using length,
+   tangent consistency, density, and optional effective-resistance/current
+   support. A greedy selector enforces connectivity, endpoint/junction
+   degrees, and the requested cycle rank.
+5. **Simplify the graph.** Maximal degree-2 paths are collapsed into route
+   support paths. The existing coarsening mode may still prune short terminal
+   branches and merge nearby graph junctions.
 6. **Fit route geometry.** Open and closed chains are represented by dense
    sampled curves. SciPy smoothing splines are preferred, with a deterministic
    NumPy fallback for unsupported or numerically difficult cases.
@@ -161,8 +168,16 @@ The most important estimator parameters are:
 | --- | --- |
 | `n_centroids` | Resolution of the landmark graph; larger values preserve more detail but cost more |
 | `max_cycles` | Maximum number of cycles allowed in the fitted graph |
-| `persistence_threshold` | Threshold for treating an H1 bar as meaningful; `None` selects a local-scale default |
+| `persistence_threshold` | H1 significance threshold; topological mode interprets it in normalized nearest-neighbour units |
 | `topology_neighbors` | Number of local kNN neighbors considered for cycle candidates |
+| `backbone_initialization` | `coarsen` for the legacy initializer or `topological` for constrained topology-aware routing |
+| `junction_scales` / `junction_inner_fraction` | Multiscale annulus settings for local branch detection |
+| `junction_confidence` | Minimum stable branch-count confidence |
+| `use_local_pca` / `local_pca_neighbors` | Enable local tangent and branch-direction estimation |
+| `max_branch_angle_degrees` | Maximum allowed departure angle at a detected junction |
+| `use_effective_resistance` / `use_electrical_flow` / `use_kron_reduction` | Opt-in electrical connectivity diagnostics and routing support |
+| `routing_*_weight` | Relative length, tangent, density, resistance, and current costs |
+| `use_tangent_boundary_conditions` | Add PCA-aligned virtual spline control points at open route boundaries |
 | `spline_smoothing` | Smoothing strength for route curves |
 | `merge_junction_distance` | Distance used to merge nearby graph junctions; `None` selects an automatic value |
 | `prune_short_branches` | Whether very short terminal branches are removed |
@@ -258,7 +273,12 @@ Useful fitted attributes include:
 - `persistence_backend_`: `ripser`, `numpy`, or `numpy-after-ripser-error`;
 - `route_backends_`: backend used for each route;
 - `route_chains_`: graph chains that became routes;
-- `junctions_` and `endpoints_`: landmark nodes classified by degree.
+- `cycle_count_`, `persistence_diagram_`, and `normalized_persistence_diagram_`;
+- `junctions_` and `endpoints_`: topological regions in topological mode;
+- `branch_counts_`, `branch_confidence_`, `local_tangents_`, and
+  `junction_branch_directions_`;
+- `effective_resistance_`, `edge_leverage_`, `electrical_traffic_`,
+  `backbone_graph_`, and `backbone_paths_` in topological mode.
 
 Fallbacks are recorded in these attributes so a result remains inspectable.
 Unexpected backend failures are warned about; expected optional-dependency
@@ -285,7 +305,9 @@ The main implementation is organized as follows:
 topological_graph_embedding/
 ├── embedding.py                 # public estimator and projection API
 ├── results.py                   # immutable EmbeddingResult
-├── _topology.py                 # landmarks, graph construction, persistence
+├── _topology.py                 # graph construction, persistence, local topology
+├── _local_geometry.py           # local PCA tangents and branch directions
+├── _electrical.py               # resistance, flow, and Kron diagnostics
 ├── _curves.py                   # route fitting and projection
 ├── _frames.py                   # deterministic normal frames
 ├── sklearn.py                   # optional sklearn adapters

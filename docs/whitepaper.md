@@ -67,7 +67,31 @@ The fitted local scale is the median non-zero nearest-neighbor distance. A
 fully duplicated cloud has no non-zero neighbor distance, so the implementation
 uses a small finite floor instead of producing `NaN`.
 
-### 2.2 Landmark compression
+### 2.2 Initialization strategies
+
+`SplineGraphEmbedding` preserves the original `coarsen` initializer by
+default. It compresses observations with deterministic k-means, builds an
+MST, adds local cycle-closing edges, and then extracts spline chains.
+
+The optional `topological` initializer separates topology, connectivity, and
+geometry. It builds a weighted symmetric kNN graph over standardized
+observations. Edge lengths provide geometric cost; affinity weights provide
+conductances for electrical diagnostics. The graph is a dense routing
+substrate and is not itself returned as the manifold backbone.
+
+Persistent H1 is computed on the existing capped persistence backend. Raw bars
+remain available in `persistence_diagram_`; `normalized_persistence_diagram_`
+expresses birth and death values in median-nearest-neighbour units. The
+significant normalized bars determine the requested cycle rank.
+
+Multiscale annuli around k-means prototype candidates provide local branch
+counts. Stable counts of one, two, or at least three identify endpoints,
+regular points, and junctions. Nearby candidates are clustered into one
+`JunctionRegion` or `EndpointRegion`, each retaining a center, confidence, and
+source members. Coarse landmarks are used only to stabilize singular-region
+candidates; final routes are selected through the dense graph.
+
+### 2.3 Landmark compression and local geometry
 
 The point cloud is compressed to at most `n_centroids` landmarks by a
 deterministic NumPy k-means implementation with k-means++ initialization. Its
@@ -79,12 +103,29 @@ The landmark graph is the computational representation of the topology. Each
 landmark retains its standardized coordinate, and graph edges store Euclidean
 lengths in the fitting metric.
 
-### 2.3 Sparse topology
+### 2.4 Sparse topology and electrical connectivity
 
-The initial graph is a minimum spanning tree. The MST is used only to guarantee
-connectivity; it is not a global cycle generator. Additional candidate edges
-come from the symmetrized landmark kNN graph, controlled by
-`topology_neighbors` and defaulting to six.
+In topological mode, local PCA supplies unoriented tangent fields at ordinary
+vertices and independently estimated outward directions for each junction
+arm. Candidate path departures are rejected when their oriented angle exceeds
+`max_branch_angle_degrees`; ordinary edges use the sign-invariant tangent
+consistency term (1-|u_i^T u_j|).
+
+When enabled, the conductance Laplacian supplies effective resistance,
+leverage (w_eR_e), aggregate source-target current, and an optional Kron
+reduction on retained landmarks. These quantities are connectivity evidence,
+not topology; their routing weights default to zero.
+
+The selector first builds a low-cost connected landmark structure, completes
+missing junction arms, removes redundant cycles when necessary, and adds
+cycle-closing candidates until the requested rank is reached. Maximal degree-2
+paths are retained as support points but collapsed into `backbone_graph_` edges
+before spline fitting.
+
+In coarsen mode, the initial graph remains a minimum spanning tree. The MST is
+used only to guarantee connectivity; it is not a global cycle generator.
+Additional candidate edges come from the symmetrized landmark kNN graph,
+controlled by `topology_neighbors` and defaulting to six.
 
 For each candidate edge, the estimator rejects microscopic chords and edges
 that do not close a sufficiently long local path. Among eligible local edges,
@@ -107,6 +148,11 @@ After fitting, topology diagnostics are available as:
 | `topology_shortfall_` | Requested cycles that local candidates could not realize |
 | `persistence_backend_` | `ripser`, `numpy`, or `numpy-after-ripser-error` |
 | `topology_candidate_edges_` | Symmetrized local kNN candidates |
+| `cycle_count_` | Significant normalized H1 cycle count |
+| `junction_regions_` / `endpoint_regions_` | Clustered local-topology regions |
+| `backbone_graph_` / `backbone_paths_` | Selected abstract graph and point-level route supports |
+| `effective_resistance_` / `edge_leverage_` | Optional edge electrical diagnostics |
+| `electrical_traffic_` | Optional normalized aggregate current support |
 
 Linear structure detection produces an ordered path graph for noisy lines. For
 other geometries, short terminal branches can be pruned and nearby junctions

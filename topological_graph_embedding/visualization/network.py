@@ -41,11 +41,13 @@ def plot_network(
             curve[:, 0], curve[:, 1], linewidth=2.8,
             label="route" if index == 0 else None,
         )
+    junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
+    endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
     junctions = np.asarray([
-        model.landmark_graph_.nodes[node] for node in model.junctions_
+        model.landmark_graph_.nodes[node] for node in junction_ids
     ])
     endpoints = np.asarray([
-        model.landmark_graph_.nodes[node] for node in model.endpoints_
+        model.landmark_graph_.nodes[node] for node in endpoint_ids
     ])
     if len(junctions):
         junctions = junctions * model.scale_ + model.mean_

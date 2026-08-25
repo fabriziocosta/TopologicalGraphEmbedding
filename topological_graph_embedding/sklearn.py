@@ -34,6 +34,24 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        backbone_initialization: str = "coarsen",
+        detect_cycles: bool = True,
+        detect_junctions: bool = True,
+        junction_scales: int | Sequence[float] = 6,
+        junction_inner_fraction: float = 0.25,
+        junction_confidence: float = 0.7,
+        use_local_pca: bool = True,
+        local_pca_neighbors: int = 20,
+        max_branch_angle_degrees: float = 45.0,
+        use_effective_resistance: bool = False,
+        use_electrical_flow: bool = False,
+        use_kron_reduction: bool = False,
+        routing_length_weight: float = 1.0,
+        routing_tangent_weight: float = 1.0,
+        routing_density_weight: float = 0.5,
+        routing_resistance_weight: float = 0.0,
+        routing_current_weight: float = 0.0,
+        use_tangent_boundary_conditions: bool = True,
     ) -> None:
         self.n_centroids = n_centroids
         self.persistence_threshold = persistence_threshold
@@ -48,6 +66,24 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.spline_samples_per_node = spline_samples_per_node
         self.linear_structure_tolerance = linear_structure_tolerance
         self.topology_neighbors = topology_neighbors
+        self.backbone_initialization = backbone_initialization
+        self.detect_cycles = detect_cycles
+        self.detect_junctions = detect_junctions
+        self.junction_scales = junction_scales
+        self.junction_inner_fraction = junction_inner_fraction
+        self.junction_confidence = junction_confidence
+        self.use_local_pca = use_local_pca
+        self.local_pca_neighbors = local_pca_neighbors
+        self.max_branch_angle_degrees = max_branch_angle_degrees
+        self.use_effective_resistance = use_effective_resistance
+        self.use_electrical_flow = use_electrical_flow
+        self.use_kron_reduction = use_kron_reduction
+        self.routing_length_weight = routing_length_weight
+        self.routing_tangent_weight = routing_tangent_weight
+        self.routing_density_weight = routing_density_weight
+        self.routing_resistance_weight = routing_resistance_weight
+        self.routing_current_weight = routing_current_weight
+        self.use_tangent_boundary_conditions = use_tangent_boundary_conditions
 
     def _new_embedding(self) -> SplineGraphEmbedding:
         return SplineGraphEmbedding(
@@ -64,6 +100,24 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             spline_samples_per_node=self.spline_samples_per_node,
             linear_structure_tolerance=self.linear_structure_tolerance,
             topology_neighbors=self.topology_neighbors,
+            backbone_initialization=self.backbone_initialization,
+            detect_cycles=self.detect_cycles,
+            detect_junctions=self.detect_junctions,
+            junction_scales=self.junction_scales,
+            junction_inner_fraction=self.junction_inner_fraction,
+            junction_confidence=self.junction_confidence,
+            use_local_pca=self.use_local_pca,
+            local_pca_neighbors=self.local_pca_neighbors,
+            max_branch_angle_degrees=self.max_branch_angle_degrees,
+            use_effective_resistance=self.use_effective_resistance,
+            use_electrical_flow=self.use_electrical_flow,
+            use_kron_reduction=self.use_kron_reduction,
+            routing_length_weight=self.routing_length_weight,
+            routing_tangent_weight=self.routing_tangent_weight,
+            routing_density_weight=self.routing_density_weight,
+            routing_resistance_weight=self.routing_resistance_weight,
+            routing_current_weight=self.routing_current_weight,
+            use_tangent_boundary_conditions=self.use_tangent_boundary_conditions,
         )
 
     def fit(
@@ -148,6 +202,24 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        backbone_initialization: str = "coarsen",
+        detect_cycles: bool = True,
+        detect_junctions: bool = True,
+        junction_scales: int | Sequence[float] = 6,
+        junction_inner_fraction: float = 0.25,
+        junction_confidence: float = 0.7,
+        use_local_pca: bool = True,
+        local_pca_neighbors: int = 20,
+        max_branch_angle_degrees: float = 45.0,
+        use_effective_resistance: bool = False,
+        use_electrical_flow: bool = False,
+        use_kron_reduction: bool = False,
+        routing_length_weight: float = 1.0,
+        routing_tangent_weight: float = 1.0,
+        routing_density_weight: float = 0.5,
+        routing_resistance_weight: float = 0.0,
+        routing_current_weight: float = 0.0,
+        use_tangent_boundary_conditions: bool = True,
     ) -> None:
         super().__init__(
             n_centroids=n_centroids,
@@ -163,6 +235,24 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             spline_samples_per_node=spline_samples_per_node,
             linear_structure_tolerance=linear_structure_tolerance,
             topology_neighbors=topology_neighbors,
+            backbone_initialization=backbone_initialization,
+            detect_cycles=detect_cycles,
+            detect_junctions=detect_junctions,
+            junction_scales=junction_scales,
+            junction_inner_fraction=junction_inner_fraction,
+            junction_confidence=junction_confidence,
+            use_local_pca=use_local_pca,
+            local_pca_neighbors=local_pca_neighbors,
+            max_branch_angle_degrees=max_branch_angle_degrees,
+            use_effective_resistance=use_effective_resistance,
+            use_electrical_flow=use_electrical_flow,
+            use_kron_reduction=use_kron_reduction,
+            routing_length_weight=routing_length_weight,
+            routing_tangent_weight=routing_tangent_weight,
+            routing_density_weight=routing_density_weight,
+            routing_resistance_weight=routing_resistance_weight,
+            routing_current_weight=routing_current_weight,
+            use_tangent_boundary_conditions=use_tangent_boundary_conditions,
         )
         self.estimator = estimator
 

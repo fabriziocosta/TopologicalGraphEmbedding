@@ -135,11 +135,13 @@ def plot_spline_3d(
 
     if show_nodes:
         stations = layout.node_positions()
+        junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
+        endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
         junctions = np.asarray([
-            stations[node] for node in model.junctions_ if node in stations
+            stations[node] for node in junction_ids if node in stations
         ])
         endpoints = np.asarray([
-            stations[node] for node in model.endpoints_ if node in stations
+            stations[node] for node in endpoint_ids if node in stations
         ])
         if len(junctions):
             figure.add_trace(

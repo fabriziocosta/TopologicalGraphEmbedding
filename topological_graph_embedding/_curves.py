@@ -161,10 +161,35 @@ class _SplineRoute:
             best_t[batch_start:batch_stop] = batch_best_t
         return best_projection, best_t, best_d2
 
-def _fit_curve(points: Array, closed: bool, smoothing: float, sample_count: int) -> _SplineRoute:
+def _fit_curve(
+    points: Array,
+    closed: bool,
+    smoothing: float,
+    sample_count: int,
+    start_tangent: Array | None = None,
+    end_tangent: Array | None = None,
+    tangent_epsilon: float = 0.05,
+) -> _SplineRoute:
     points = np.asarray(points, dtype=float)
     if closed and len(points) > 1 and np.allclose(points[0], points[-1]):
         points = points[:-1]
+    if not closed and len(points) >= 2 and (start_tangent is not None or end_tangent is not None):
+        span = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
+        epsilon = max(1e-8, float(tangent_epsilon) * span / max(len(points), 2))
+        augmented = [points[0]]
+        if start_tangent is not None:
+            direction = np.asarray(start_tangent, dtype=float)
+            norm = float(np.linalg.norm(direction))
+            if norm > 1e-12:
+                augmented.append(points[0] + epsilon * direction / norm)
+        augmented.extend(points[1:-1])
+        if end_tangent is not None:
+            direction = np.asarray(end_tangent, dtype=float)
+            norm = float(np.linalg.norm(direction))
+            if norm > 1e-12:
+                augmented.append(points[-1] - epsilon * direction / norm)
+        augmented.append(points[-1])
+        points = np.asarray(augmented, dtype=float)
     if len(points) < 2:
         repeated = np.repeat(points, 2, axis=0)
         return _SplineRoute(repeated, np.array([0.0, 1.0]), False, backend="degenerate")

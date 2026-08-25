@@ -124,8 +124,10 @@ def _plot_splines_in_pca(ax, model, reducer, color="black"):
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
         ax.plot(curve[:, 0], curve[:, 1], color=color, linewidth=2.0, alpha=0.9)
-    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in model.junctions_])
-    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in model.endpoints_])
+    junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
+    endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
+    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in junction_ids])
+    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in endpoint_ids])
     if len(junctions):
         ax.scatter(*reducer.transform(junctions * model.scale_ + model.mean_).T,
                    color="red", s=38, zorder=4, label="junction")
@@ -193,4 +195,3 @@ __all__ = [
     "preprocess_paul15",
     "scatter_categories",
 ]
-

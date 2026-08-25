@@ -190,7 +190,7 @@ def _weighted_symmetric_knn_graph(X: Array, neighbors: int) -> tuple[_WeightedKN
         distances = np.asarray(distances, dtype=float)
         indices = np.asarray(indices, dtype=int)
         local_scales = np.maximum(distances[:, -1], 1e-8)
-    except Exception:  # pragma: no cover - SciPy is a core dependency in normal use.
+    except (ImportError, TypeError, ValueError):  # pragma: no cover - SciPy is core in normal use.
         distances_all = _pairwise_distances(points)
         order = np.argsort(distances_all, axis=1, kind="mergesort")[:, 1:count + 1]
         distances = np.take_along_axis(distances_all, order, axis=1)
@@ -237,6 +237,7 @@ def _induced_annulus_components(
     center: Array,
     radius: float,
     inner_radius_fraction: float,
+    max_edge_length: float | None = None,
 ) -> list[np.ndarray]:
     """Return connected components in a graph-induced annulus."""
     distances = np.linalg.norm(graph.points - np.asarray(center), axis=1)
@@ -246,7 +247,7 @@ def _induced_annulus_components(
     )
     if len(selected) == 0:
         return []
-    selected_set = set(int(index) for index in selected)
+    selected_set = {int(index) for index in selected}
     remaining = set(selected_set)
     components: list[np.ndarray] = []
     while remaining:
@@ -257,7 +258,12 @@ def _induced_annulus_components(
         while stack:
             node = stack.pop()
             for neighbour in graph.adjacency[node]:
-                if neighbour in remaining and neighbour in selected_set:
+                edge = graph.key(node, neighbour)
+                if (
+                    neighbour in remaining
+                    and neighbour in selected_set
+                    and (max_edge_length is None or graph.edges[edge] <= max_edge_length)
+                ):
                     remaining.remove(neighbour)
                     stack.append(neighbour)
                     component.append(neighbour)
@@ -299,7 +305,7 @@ def _cluster_region_candidates(
         confidence = float(np.average(weights, weights=weights))
         if junction:
             counts = [candidates[index][1] for index in group]
-            branch_count = int(round(float(np.median(counts))))
+            branch_count = round(float(np.median(counts)))
             arm_indices = max(
                 (candidates[index][3] for index in group),
                 key=lambda arms: (len(arms), -abs(len(arms) - branch_count)),
@@ -350,6 +356,7 @@ def _estimate_local_topology(
                 X[point_index],
                 base_radius * float(multiplier),
                 inner_radius_fraction,
+                max_edge_length=0.45 * base_radius * float(multiplier),
             )
             for multiplier in scale_multipliers
         ]
@@ -866,6 +873,55 @@ def _estimate_persistence(
         )
 
 
+def estimate_topology(
+    X: Array,
+    *,
+    persistence_threshold: float | None = None,
+    local_scales: Sequence[float] | None = None,
+    inner_radius_fraction: float = 0.25,
+    min_junction_confidence: float = 0.7,
+    junction_scales: int | Sequence[float] = 6,
+    topology_neighbors: int = 6,
+    persistence_max_points: int = 60,
+    random_state: int = 0,
+) -> TopologyEstimate:
+    """Estimate cycle and local branch constraints for a point cloud.
+
+    This compact internal entry point is useful for diagnostics and unit
+    tests.  ``SplineGraphEmbedding`` calls the same primitives while retaining
+    fitted graph and routing diagnostics on the estimator.
+    """
+    points = _as_point_cloud(X)
+    graph, graph_scales = _weighted_symmetric_knn_graph(points, topology_neighbors)
+    scale = _local_scale(points)
+    diagram, _ = _estimate_persistence(
+        points, max_points=persistence_max_points, random_state=random_state
+    )
+    normalized = _normalize_persistence_diagram(diagram, scale)
+    threshold = 4.0 if persistence_threshold is None else float(persistence_threshold)
+    lifetimes = normalized[:, 1] - normalized[:, 0] if len(normalized) else np.empty(0)
+    cycle_count = int(np.sum(np.isfinite(lifetimes) & (lifetimes >= threshold)))
+    prototypes = _kmeans(points, min(32, len(points)), random_state)
+    junctions, endpoints, branch_counts, confidences = _estimate_local_topology(
+        points,
+        graph,
+        prototypes,
+        local_scales=graph_scales if local_scales is None else local_scales,
+        inner_radius_fraction=inner_radius_fraction,
+        min_junction_confidence=min_junction_confidence,
+        scales=junction_scales,
+    )
+    return TopologyEstimate(
+        cycle_count,
+        np.asarray(diagram, dtype=float),
+        normalized,
+        junctions,
+        endpoints,
+        branch_counts,
+        confidences,
+    )
+
+
 def _normalize_persistence_diagram(diagram: Array, scale: float) -> Array:
     """Express a raw persistence diagram in nearest-neighbour scale units."""
     diagram = np.asarray(diagram, dtype=float)
@@ -940,13 +996,24 @@ def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
         for vertex in (left, right):
             if vertex not in anchors:
                 anchors.append(vertex)
-            if len(anchors) >= max(2, 2 * count):
-                return anchors
-    if not anchors:
-        # A numerically weak cycle estimate still needs a stable pair of
-        # anchors so the selector can represent one closed route.
-        anchors = [0]
-        farthest = int(np.argmax(np.linalg.norm(graph.points - graph.points[0], axis=1)))
-        if farthest != 0:
-            anchors.append(farthest)
-    return anchors[: max(2, 2 * count)]
+            if len(anchors) >= max(3, 3 * count):
+                break
+    target = max(3, 3 * count)
+    # Use the strongest cycle edge only as a reproducible seed, then spread
+    # anchors around the corresponding support rather than retaining several
+    # adjacent vertices from the same local kNN chord.
+    anchors = [anchors[0]] if anchors else [0]
+    while len(anchors) < target and len(anchors) < len(graph.points):
+        distances = np.min(
+            np.asarray([
+                np.linalg.norm(graph.points - graph.points[anchor], axis=1)
+                for anchor in anchors
+            ]),
+            axis=0,
+        )
+        distances[anchors] = -np.inf
+        next_anchor = int(np.argmax(distances))
+        if not np.isfinite(distances[next_anchor]):
+            break
+        anchors.append(next_anchor)
+    return anchors[:target]

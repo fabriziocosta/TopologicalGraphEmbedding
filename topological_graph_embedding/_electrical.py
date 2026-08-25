@@ -76,7 +76,7 @@ def _kron_reduction(
     landmark_vertices: Sequence[int],
 ) -> tuple[Array, Array]:
     """Return the Schur-complement Laplacian and retained vertex IDs."""
-    retained = np.asarray(sorted(set(int(value) for value in landmark_vertices)), dtype=int)
+    retained = np.asarray(sorted({int(value) for value in landmark_vertices}), dtype=int)
     if len(retained) == 0:
         return np.empty((0, 0), dtype=float), retained
     laplacian = _laplacian(graph)
@@ -97,8 +97,8 @@ def _kron_reduction(
 
 
 __all__ = [
-    "_electrical_flow",
     "_effective_resistance",
+    "_electrical_flow",
     "_kron_reduction",
     "_laplacian",
 ]

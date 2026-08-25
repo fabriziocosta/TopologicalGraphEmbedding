@@ -252,7 +252,11 @@ def _has_categorical_target(labels, n_samples: int | None = None) -> bool:
     values = np.asarray(labels)
     if values.ndim != 1 or (n_samples is not None and len(values) != n_samples):
         return False
-    if not len(values) or type_of_target(values) not in {'binary', 'multiclass'}:
+    if (
+        not len(values)
+        or _target_is_continuous(values)
+        or type_of_target(values) not in {'binary', 'multiclass'}
+    ):
         return False
     return len(np.unique(values)) > 1
 
@@ -452,7 +456,9 @@ def _plot_metro_stations(axis, model, layout):
     # Junction stations are drawn in data coordinates so their size remains
     # meaningful as the map is zoomed.  Routes have already been clipped to
     # these circumferences by MetroLayout.
-    for node in model.junctions_:
+    junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
+    endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
+    for node in junction_ids:
         if node not in station_positions:
             continue
         radius = layout.junction_radii_.get(node, 0.72)
@@ -467,7 +473,7 @@ def _plot_metro_stations(axis, model, layout):
             )
         )
     endpoints = np.asarray([
-        station_positions[node] for node in model.endpoints_ if node in station_positions
+        station_positions[node] for node in endpoint_ids if node in station_positions
     ])
     if len(endpoints):
         axis.scatter(
@@ -609,8 +615,10 @@ def plot_embedding_row(
 
 
 def _plot_stations(axis, model, transform):
-    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in model.junctions_])
-    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in model.endpoints_])
+    junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
+    endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
+    junctions = np.asarray([model.landmark_graph_.nodes[node] for node in junction_ids])
+    endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in endpoint_ids])
     if len(junctions):
         junctions = transform(junctions)
         axis.scatter(
