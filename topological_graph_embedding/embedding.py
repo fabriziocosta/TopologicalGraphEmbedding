@@ -237,6 +237,8 @@ class SplineGraphEmbedding:
             # artifact and must not create a cycle anchor.
             self.requested_cycle_count_ = 0
         self.backbone_paths_ = None
+        self.central_junction_locked_ = False
+        self.central_junction_center_ = None
         if self.backbone_initialization == "topological":
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
             self.backbone_paths_ = backbone_paths
@@ -312,6 +314,8 @@ class SplineGraphEmbedding:
                 chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
             else:
                 chain["points"] = self._chain_support_points(chain)
+            if self.central_junction_locked_ and chain.get("closed"):
+                chain["points"] = self._figure_eight_support_points(points, chain)
             if (
                 self.linear_structure_
                 and self.linear_center_ is not None
@@ -519,6 +523,10 @@ class SplineGraphEmbedding:
                 if len(arms) == 4:
                     junctions = [JunctionRegion(center.copy(), 4, 0.9, [center_index], arms)]
                     central_junction_locked = True
+        self.central_junction_locked_ = central_junction_locked
+        self.central_junction_center_ = (
+            junctions[0].center.copy() if central_junction_locked else None
+        )
         if self.requested_cycle_count_ > 0 and not junctions:
             # A closed one-manifold has two annulus sides at every ordinary
             # point; finite sampling can label a few of those annuli as one
@@ -1416,6 +1424,31 @@ class SplineGraphEmbedding:
         if not segments:
             return np.asarray([self.landmark_graph_.nodes[node] for node in nodes], dtype=float)
         return np.vstack(segments)
+
+    def _figure_eight_support_points(self, points: Array, chain: dict[str, Any]) -> Array:
+        """Order observations around each lobe of a locked figure-eight."""
+        nodes = [node for node in chain["nodes"] if node != chain["nodes"][0]]
+        if not nodes or self.central_junction_center_ is None:
+            return chain["points"]
+        center = np.asarray(self.central_junction_center_, dtype=float)
+        node_mean = float(np.mean([
+            self.landmark_graph_.nodes[node][0] for node in nodes
+        ]))
+        side = -1.0 if node_mean < center[0] else 1.0
+        side_coordinate = points[:, 0] - center[0]
+        mask = side_coordinate <= 0.0 if side < 0.0 else side_coordinate >= 0.0
+        lobe = np.asarray(points[mask], dtype=float)
+        if len(lobe) < 8:
+            return chain["points"]
+        lobe_center = np.mean(lobe, axis=0)
+        angles = np.arctan2(
+            lobe[:, 1] - lobe_center[1],
+            lobe[:, 0] - lobe_center[0],
+        )
+        ordered = lobe[np.argsort(angles)]
+        start = int(np.argmin(np.linalg.norm(ordered - center, axis=1)))
+        ordered = np.roll(ordered, -start, axis=0)
+        return np.vstack([center, ordered, center])
 
     def _anchor_closed_junctions(self) -> None:
         """Make closed spline samples pass exactly through graph junctions."""
