@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 from sklearn.base import clone
@@ -11,6 +13,7 @@ from topological_graph_embedding._electrical import (
 from topological_graph_embedding._topology import _weighted_symmetric_knn_graph
 from topological_graph_embedding.datasets import generate_synthetic_datasets
 from topological_graph_embedding.sklearn import SplineEmbeddingTransformer
+from topological_graph_embedding.visualization.metro import MetroLayout
 
 
 @pytest.mark.parametrize(
@@ -192,3 +195,68 @@ def test_topological_single_loop_spline_covers_both_sides_of_cycle():
     assert samples[:, 1].min() < -0.7
     assert samples[:, 1].max() > 0.7
     assert np.median(model.transform(points).residual_norm) < 0.1
+
+
+def test_topological_line_spline_is_linear_in_original_metric():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["line"]
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        random_state=0,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    samples = model.routes_[0].samples
+    centered = samples - np.mean(samples, axis=0)
+    orthogonal = np.asarray([-model.linear_direction_[1], model.linear_direction_[0]])
+    assert np.max(np.abs(centered @ orthogonal)) < 1e-8
+    assert model.landmark_graph_.degree(model.endpoint_node_ids_[0]) == 1
+    assert model.landmark_graph_.degree(model.endpoint_node_ids_[1]) == 1
+
+
+def test_topological_shared_cycles_use_opposite_metro_sides():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["figure-eight"]
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        random_state=0,
+        backbone_initialization="topological",
+    ).fit(points)
+    result = model.transform(points)
+    layout = MetroLayout(model).fit(result)
+
+    junction = next(node for node in model.landmark_graph_.nodes if model.landmark_graph_.degree(node) >= 3)
+    station_x = layout.station_positions_[junction][0]
+    closed_paths = [
+        path for route, path in enumerate(layout.route_paths_)
+        if model.route_chains_[route]["closed"]
+    ]
+    relative_centers = [float(np.mean(path[:, 0]) - station_x) for path in closed_paths]
+    assert len(relative_centers) == 2
+    assert relative_centers[0] * relative_centers[1] < 0.0
+
+
+def test_topological_complex_workflow_keeps_cycle_backbones_closed():
+    from topological_graph_embedding.datasets import noisy_hypercube, noisy_polygon_rays_circles
+
+    clouds = [
+        noisy_polygon_rays_circles(
+            n=500, noise=0.045, rng=np.random.default_rng(0), n_sides=4,
+        ),
+        noisy_hypercube(
+            n=500, dim=3, noise=0.055, rng=np.random.default_rng(7),
+        ),
+    ]
+    for points in clouds:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            model = SplineGraphEmbedding(
+                n_centroids=32,
+                max_cycles=5,
+                random_state=0,
+                persistence_threshold=4.0,
+                persistence_max_points=300,
+                backbone_initialization="topological",
+            ).fit(points)
+        result = model.transform(points)
+        assert model.realized_cycle_count_ == model.requested_cycle_count_
+        assert model.endpoints_ == []
+        assert np.all(np.isfinite(result.projected))

@@ -270,6 +270,11 @@ that the requested persistence-derived cycle target was not realized by the
 available local candidates. A backend name beginning with `numpy` indicates
 that the approximate persistence implementation was used.
 
+The synthetic notebook deliberately uses `persistence_max_points=300` and a
+normalized H1 threshold of `4.0` for its detailed polygon and hypercube cases.
+This is a workflow setting, not an estimator-default change. Effective
+resistance, electrical flow, and their routing weights remain opt-in.
+
 ## 10. Reproducibility and limitations
 
 Randomized stages use `random_state`, including landmark initialization and

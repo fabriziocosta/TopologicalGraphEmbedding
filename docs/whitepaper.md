@@ -209,6 +209,10 @@ observation-landmark-feature tensor, and route projection is batched over
 observations and route samples. The persistence fallback is intended for
 moderate point clouds and can be capped with `persistence_max_points`.
 
+The synthetic notebook uses a cap of `300` observations and normalized H1
+threshold `4.0` for the higher-detail polygon and hypercube demonstrations;
+electrical resistance/current support remains disabled by default.
+
 The method has several approximation sources: landmark compression, sparse
 neighborhood construction, sampled route projection, and the persistence
 fallback. The topology shortfall diagnostic identifies one important failure

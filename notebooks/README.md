@@ -50,8 +50,9 @@ pale-blue-to-ink-blue gradient and a target colorbar.
 `visualize_paul_single_cell.ipynb` applies the model to the Paul et al. mouse
 bone-marrow MARS-seq experiment. It downloads the public `paul15.h5` file to
 `~/.cache/topologicalgraphembedding/`, preprocesses expression without using
-cell labels during fitting, and shows PCA, intrinsic graph coordinates, the
-fitted spline graph, broad lineages, and marker-expression panels.
+cell labels during fitting, denoises the graph-fitting space with 50 PCA
+components, and shows PCA, intrinsic graph coordinates, the fitted spline
+graph, broad lineages, and marker-expression panels.
 
 Launch it from the repository root with:
 
