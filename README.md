@@ -15,7 +15,7 @@ available for analysis.
 
 ## The underlying idea
 
-Suppose observations $x_i \\in \\mathbb{R}^d$ are sampled around an unknown
+Suppose observations $x_i \in \mathbb{R}^d$ are sampled around an unknown
 graph of smooth curves. We learn a route network
 
 $$

@@ -48,6 +48,47 @@ from .results import EmbeddingResult
 
 Array = np.ndarray
 
+
+def _geodesic_diameter_endpoints(
+    graph: Any,
+    component: Sequence[int],
+) -> tuple[int, int]:
+    """Return the two ends of an open graph component.
+
+    Euclidean extremes are unreliable for curved strands: an interior bend can
+    be farther from one end than the actual second endpoint.  Two Dijkstra
+    sweeps recover the diameter endpoints while keeping the search inside the
+    natural kNN component.
+    """
+    allowed = {int(vertex) for vertex in component}
+    if len(allowed) < 2:
+        vertex = next(iter(allowed))
+        return vertex, vertex
+
+    def farthest(source: int) -> tuple[int, dict[int, float]]:
+        distances = {source: 0.0}
+        queue: list[tuple[float, int]] = [(0.0, source)]
+        while queue:
+            distance, node = heapq.heappop(queue)
+            if distance > distances.get(node, np.inf) + 1e-12:
+                continue
+            for neighbour in graph.adjacency[node]:
+                if neighbour not in allowed:
+                    continue
+                edge = graph.key(node, neighbour)
+                candidate = distance + float(graph.edges[edge])
+                if candidate < distances.get(neighbour, np.inf):
+                    distances[neighbour] = candidate
+                    heapq.heappush(queue, (candidate, int(neighbour)))
+        endpoint = max(distances, key=lambda node: (distances[node], -node))
+        return int(endpoint), distances
+
+    first, _ = farthest(min(allowed))
+    second, distances = farthest(first)
+    if second not in distances:
+        second = min(allowed - {first})
+    return first, second
+
 class SplineGraphEmbedding:
     """Fit a smooth graph of spline routes to a point cloud."""
 
@@ -316,6 +357,15 @@ class SplineGraphEmbedding:
                 chain["points"] = self._chain_support_points(chain)
             if self.central_junction_locked_ and chain.get("closed"):
                 chain["points"] = self._figure_eight_support_points(points, chain)
+            elif (
+                chain.get("closed")
+                and self.backbone_paths_ is not None
+                and all(
+                    self.landmark_graph_.degree(node) == 2
+                    for node in set(chain["nodes"])
+                )
+            ):
+                chain["points"] = self._simple_cycle_support_points(points, chain)
             if (
                 self.linear_structure_
                 and self.linear_center_ is not None
@@ -376,6 +426,7 @@ class SplineGraphEmbedding:
             for component_id, component in enumerate(routing_components)
             for vertex in component
         }
+        self.routing_component_by_vertex_ = component_by_vertex.copy()
         component_cycle_counts: list[int] = []
         for component_id, component in enumerate(routing_components):
             if len(routing_components) == 1 or len(component) < 8:
@@ -453,42 +504,18 @@ class SplineGraphEmbedding:
             and self.requested_cycle_count_ == 0
         ):
             # A global centroid MST connects disconnected clouds and can
-            # manufacture junctions on curved components.  For disconnected
-            # open curves, retain at most the two most separated terminal
-            # votes per observation component instead.
-            endpoint_votes: dict[int, list[EndpointRegion]] = {
-                component_id: [] for component_id in range(len(routing_components))
-            }
-            for endpoint in endpoints:
-                vertex = int(np.argmin(np.sum((points - endpoint.center) ** 2, axis=1)))
-                component_id = component_by_vertex.get(vertex)
-                if component_id is not None:
-                    endpoint_votes[component_id].append(endpoint)
+            # manufacture junctions on curved components.  Local annulus
+            # votes are also ambiguous on a bent open strand: an interior bend
+            # can look like an endpoint at one scale.  Use the weighted graph
+            # diameter of each natural component instead, which returns the
+            # actual two terminals of every open arc.
             consolidated: list[EndpointRegion] = []
-            for component_id, component in enumerate(routing_components):
-                votes = endpoint_votes[component_id]
-                if len(votes) >= 2:
-                    pair = max(
-                        (
-                            (left, right)
-                            for left in range(len(votes))
-                            for right in range(left + 1, len(votes))
-                        ),
-                        key=lambda pair: np.linalg.norm(
-                            votes[pair[0]].center - votes[pair[1]].center
-                        ),
-                    )
-                    consolidated.extend([votes[pair[0]], votes[pair[1]]])
-                    continue
-                centered = points[component] - np.mean(points[component], axis=0)
-                _, _, components = np.linalg.svd(centered, full_matrices=False)
-                direction = components[0] if len(components) else np.zeros(points.shape[1])
-                coordinates = centered @ direction
-                for vertex in (
-                    int(component[int(np.argmin(coordinates))]),
-                    int(component[int(np.argmax(coordinates))]),
-                ):
-                    consolidated.append(EndpointRegion(points[vertex].copy(), 0.6, [vertex]))
+            for component in routing_components:
+                left, right = _geodesic_diameter_endpoints(routing_graph, component)
+                consolidated.extend([
+                    EndpointRegion(points[left].copy(), 1.0, [left]),
+                    EndpointRegion(points[right].copy(), 1.0, [right]),
+                ])
             endpoints = consolidated
         central_junction_locked = False
         if (
@@ -1381,6 +1408,10 @@ class SplineGraphEmbedding:
 
         for key, candidate in selected.items():
             graph.add_edge(key[0], key[1], candidate.length)
+        self.landmark_vertex_ids_ = np.asarray(
+            [specification["vertex"] for specification in specifications],
+            dtype=int,
+        )
         self.junction_degree_shortfall_ = {
             index: max(0, specifications[index]["region"].branch_count - degree[index])
             for index in range(len(specifications))
@@ -1401,6 +1432,12 @@ class SplineGraphEmbedding:
     def _chain_support_points(self, chain: dict[str, Any]) -> Array:
         """Concatenate stored point-level paths for one abstract route chain."""
         nodes = list(chain["nodes"])
+        if chain.get("closed") and not any(
+            self.landmark_graph_.degree(node) >= 3 for node in set(nodes)
+        ):
+            ordered_component = self._ordered_closed_component_points(nodes)
+            if ordered_component is not None:
+                return ordered_component
         pairs = list(pairwise(nodes))
         if chain.get("closed") and len(nodes) > 1:
             pairs.append((nodes[-1], nodes[0]))
@@ -1424,6 +1461,42 @@ class SplineGraphEmbedding:
         if not segments:
             return np.asarray([self.landmark_graph_.nodes[node] for node in nodes], dtype=float)
         return np.vstack(segments)
+
+    def _ordered_closed_component_points(self, nodes: list[int]) -> Array | None:
+        """Return a full, non-backtracking support order for a simple loop.
+
+        A dense kNN graph can contain chords and several shortest paths between
+        cycle anchors.  Concatenating those paths may reuse one side of a loop
+        and fold the fitted spline back over itself.  For an unbranched loop,
+        all observations in its natural component are better support: ordering
+        them around the first two principal axes gives one complete turn and
+        is stable for the planar/noisy cycles this route represents.
+        """
+        if not nodes or not getattr(self, "routing_components_", None):
+            return None
+        landmark_vertices = getattr(self, "landmark_vertex_ids_", None)
+        if landmark_vertices is None:
+            return None
+        vertex = int(landmark_vertices[nodes[0]])
+        component_id = self.routing_component_by_vertex_.get(vertex)
+        if component_id is None:
+            return None
+        component = np.asarray(self.routing_components_[component_id], dtype=int)
+        if len(component) < 3:
+            return None
+        points = np.asarray(self.routing_graph_.points[component], dtype=float)
+        centered = points - np.mean(points, axis=0, keepdims=True)
+        if points.shape[1] < 2:
+            return None
+        _, singular_values, components = np.linalg.svd(
+            centered, full_matrices=False,
+        )
+        if len(singular_values) < 2 or singular_values[1] <= 1e-10:
+            return None
+        planar = centered @ components[:2].T
+        angles = np.arctan2(planar[:, 1], planar[:, 0])
+        order = np.argsort(angles, kind="mergesort")
+        return points[order]
 
     def _figure_eight_support_points(self, points: Array, chain: dict[str, Any]) -> Array:
         """Order observations around each lobe of a locked figure-eight."""
@@ -1449,6 +1522,35 @@ class SplineGraphEmbedding:
         start = int(np.argmin(np.linalg.norm(ordered - center, axis=1)))
         ordered = np.roll(ordered, -start, axis=0)
         return np.vstack([center, ordered, center])
+
+    def _simple_cycle_support_points(self, points: Array, chain: dict[str, Any]) -> Array:
+        """Use the full observation component for a junction-free cycle."""
+        anchor = int(chain["nodes"][0])
+        anchor_vertex = self.backbone_paths_.get(
+            self.landmark_graph_._key(anchor, chain["nodes"][1])
+        )
+        if anchor_vertex is None:
+            return chain["points"]
+        component_id = self.routing_component_by_vertex_.get(
+            int(anchor_vertex.vertices[0])
+        )
+        if component_id is None or component_id >= len(self.routing_components_):
+            return chain["points"]
+        component = self.routing_components_[component_id]
+        if len(component) < 8:
+            return chain["points"]
+        component_points = np.asarray(points[component], dtype=float)
+        center = np.mean(component_points, axis=0)
+        angles = np.arctan2(
+            component_points[:, 1] - center[1],
+            component_points[:, 0] - center[0],
+        )
+        ordered = component_points[np.argsort(angles)]
+        anchor_center = self.landmark_graph_.nodes[anchor]
+        start = int(np.argmin(np.linalg.norm(ordered - anchor_center, axis=1)))
+        ordered = np.roll(ordered, -start, axis=0)
+        ordered[0] = anchor_center
+        return np.vstack([ordered, ordered[0]])
 
     def _anchor_closed_junctions(self) -> None:
         """Make closed spline samples pass exactly through graph junctions."""

@@ -36,12 +36,14 @@ Let $T$ denote the optional featurewise affine standardization used during
 fitting, and let $z_i=T(x_i)$. When standardization is disabled, $T$ is the
 identity. The fitted route network is
 
-$$\widetilde{\Gamma}=\{\widetilde{\gamma}_r:[0,1]\rightarrow\mathbb{R}^d\}_{r=1}^{R}.$$
+$$
+\tilde{\Gamma}=\{\tilde{\gamma}_r:[0,1]\rightarrow\mathbb{R}^d\}_{r=1}^{R}.
+$$
 
 where the curves are expressed in fitting coordinates. For each observation,
 the implementation approximates
 
-$(r_i,u_i)\approx\arg\min_{r,u}\|z_i-widetilde{\gamma}_r(u)\|_2$.
+$(r_i,u_i)\approx\arg\min_{r,u}\|z_i-\tilde{\gamma}_r(u)\|_2$.
 
 The minimization is evaluated on a dense piecewise-linear representation of
 each route rather than by continuous optimization. Consequently, the route

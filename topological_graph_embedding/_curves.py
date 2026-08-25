@@ -261,15 +261,24 @@ def _fit_curve(
         control_min = np.min(points, axis=0)
         control_max = np.max(points, axis=0)
         control_span = np.maximum(control_max - control_min, 1e-8)
+        sample_span = np.ptp(candidate_samples, axis=0)
+        active_dimensions = control_span > 0.1 * np.max(control_span)
+        has_closed_collapse = closed and np.any(
+            sample_span[active_dimensions] < 0.80 * control_span[active_dimensions]
+        )
         margin = np.maximum(0.25 * control_span, 1e-3)
         has_overshoot = np.any(candidate_samples < control_min - margin) or np.any(
             candidate_samples > control_max + margin
         )
-        if np.all(np.isfinite(candidate_samples)) and not has_overshoot:
+        if np.all(np.isfinite(candidate_samples)) and not has_overshoot and not has_closed_collapse:
             samples = candidate_samples
         else:
             tck = None
-            backend = "numpy-overshoot-fallback"
+            backend = (
+                "numpy-closed-collapse-fallback"
+                if has_closed_collapse and not has_overshoot
+                else "numpy-overshoot-fallback"
+            )
     if tck is None:
         samples = _catmull_rom(points, sample_t, closed)
     if not closed:
