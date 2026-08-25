@@ -42,9 +42,10 @@ def build_datasets(
 def fit_datasets(
     datasets,
     n_centroids=32,
-    persistence_threshold=None,
+    persistence_threshold=4.0,
     spline_smoothing=0.02,
     max_cycles=5,
+    persistence_max_points=300,
 ):
     """Fit one graph per dataset and return models, projections, and a summary."""
     models = {}
@@ -56,6 +57,7 @@ def fit_datasets(
             backbone_initialization="topological",
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
+            persistence_max_points=persistence_max_points,
             spline_smoothing=spline_smoothing,
             max_cycles=max_cycles,
             random_state=index,
@@ -103,11 +105,12 @@ def run_static_demo(
     noise=0.045,
     hypercube_noise=0.055,
     n_centroids=32,
-    persistence_threshold=None,
+    persistence_threshold=4.0,
     spline_smoothing=0.02,
     max_cycles=5,
     metro_residual_width=0.02,
     polygon_sides=5,
+    persistence_max_points=300,
 ):
     """Build, fit, plot, and summarize all static synthetic datasets."""
     project_root = Path(project_root)
@@ -122,6 +125,7 @@ def run_static_demo(
         datasets,
         n_centroids=n_centroids,
         persistence_threshold=persistence_threshold,
+        persistence_max_points=persistence_max_points,
         spline_smoothing=spline_smoothing,
         max_cycles=max_cycles,
     )
@@ -172,4 +176,6 @@ def display_interactive_controls(datasets):
         default_reducer="pca",
         default_n_centroids=32,
         default_max_cycles=5,
+        default_persistence_max_points=300,
+        default_persistence_threshold=4.0,
     )

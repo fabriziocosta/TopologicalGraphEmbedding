@@ -218,6 +218,19 @@ class SplineGraphEmbedding:
         self.linear_structure_ = _is_nearly_linear(
             centroids_original, self.linear_structure_tolerance
         )
+        if self.linear_structure_:
+            # Estimate the axis before feature standardization.  Standardizing
+            # each coordinate makes a thin noisy line look artificially
+            # isotropic and can rotate the PCA axis into the noise band.
+            original_center = np.mean(original, axis=0)
+            centered = original - original_center
+            _, _, components = np.linalg.svd(centered, full_matrices=False)
+            self.linear_center_ = (original_center - mean) / scale
+            direction = components[0] / scale
+            self.linear_direction_ = direction / max(float(np.linalg.norm(direction)), 1e-12)
+        else:
+            self.linear_center_ = None
+            self.linear_direction_ = None
         if self.backbone_initialization == "topological" and self.linear_structure_:
             # A noisy line can carry a small numerical H1 bar in a subsample;
             # its one-dimensional geometry is a stronger constraint than that
@@ -299,6 +312,24 @@ class SplineGraphEmbedding:
                 chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
             else:
                 chain["points"] = self._chain_support_points(chain)
+            if (
+                self.linear_structure_
+                and self.linear_center_ is not None
+                and self.linear_direction_ is not None
+                and len(chain["points"]) >= 2
+            ):
+                # The dense routing path intentionally keeps every support
+                # observation, but a noisy one-dimensional cloud must not
+                # turn measurement noise into a zig-zag spline.  Project the
+                # support points onto the fitted PCA axis before the spline
+                # stage; this leaves projection and residuals meaningful
+                # while making the linear backbone actually linear.
+                support = np.asarray(chain["points"], dtype=float)
+                coordinates = (support - self.linear_center_) @ self.linear_direction_
+                chain["points"] = (
+                    self.linear_center_
+                    + coordinates[:, None] * self.linear_direction_
+                )
         self.routes_ = []
         for chain in self.route_chains_:
             start_tangent, end_tangent = self._chain_boundary_tangents(chain)
@@ -383,13 +414,15 @@ class SplineGraphEmbedding:
             # A one-dimensional cloud is a special case of the local detector:
             # small annulus gaps caused by noise should not become junctions.
             junctions = []
-            centered = points - np.mean(points, axis=0)
-            _, _, components = np.linalg.svd(centered, full_matrices=False)
-            direction = components[0]
-            coordinates = centered @ direction
+            direction = self.linear_direction_
+            coordinates = (points - self.linear_center_) @ direction
             endpoint_vertices = [int(np.argmin(coordinates)), int(np.argmax(coordinates))]
             endpoints = [
-                EndpointRegion(points[vertex].copy(), 1.0, [vertex])
+                EndpointRegion(
+                    (self.linear_center_ + coordinates[vertex] * direction).copy(),
+                    1.0,
+                    [vertex],
+                )
                 for vertex in endpoint_vertices
             ]
             branch_counts = np.full(len(centroids), 2, dtype=int)
@@ -1262,21 +1295,22 @@ class SplineGraphEmbedding:
             # noisy strip.  For a one-dimensional cloud, PCA ordering is the
             # topological route and gives the spline every observation in
             # monotone longitudinal order.
-            centered = points - np.mean(points, axis=0)
-            _, _, components = np.linalg.svd(centered, full_matrices=False)
-            direction = components[0]
-            ordered_vertices = np.argsort(centered @ direction).astype(int).tolist()
+            direction = self.linear_direction_
+            center = self.linear_center_
+            coordinates = (points - center) @ direction
+            ordered_vertices = np.argsort(coordinates).astype(int).tolist()
             ordered_coordinate = {
-                vertex: float(points[vertex] @ direction)
+                vertex: float(coordinates[vertex])
                 for vertex in ordered_vertices
             }
+            linear_points = center + coordinates[:, None] * direction
             for key, candidate in list(selected.items()):
                 left, right = key
                 vertices = ordered_vertices
                 if ordered_coordinate[candidate.vertices[0]] > ordered_coordinate[candidate.vertices[-1]]:
                     vertices = list(reversed(vertices))
                 route_length = float(sum(
-                    np.linalg.norm(points[a] - points[b])
+                    np.linalg.norm(linear_points[a] - linear_points[b])
                     for a, b in pairwise(vertices)
                 ))
                 selected[key] = CandidatePath(

@@ -441,6 +441,29 @@ class MetroLayout:
     def _build_route_paths(self) -> list[np.ndarray]:
         paths = []
         loop_index = 0
+        # Closed chains that share a junction need distinct sides of that
+        # station.  If every loop is anchored at the same angular position,
+        # a figure-eight is drawn as two overlapping circles on one side of
+        # the junction.  Precompute the shared-cycle groups so the loop
+        # anchors can be distributed around the common station.
+        cycle_routes_by_junction: dict[int, list[int]] = {}
+        closed_route_junctions: dict[int, list[int]] = {}
+        for route, chain in enumerate(self.model.route_chains_):
+            if not chain["closed"]:
+                continue
+            unique_nodes = list(chain["nodes"])
+            if len(unique_nodes) > 1 and unique_nodes[0] == unique_nodes[-1]:
+                unique_nodes = unique_nodes[:-1]
+            attached = list(dict.fromkeys(
+                node for node in unique_nodes
+                if self.landmark_graph_.degree(node) >= 3
+            ))
+            closed_route_junctions[route] = attached
+            for node in attached:
+                cycle_routes_by_junction.setdefault(node, []).append(route)
+        for routes in cycle_routes_by_junction.values():
+            routes.sort()
+
         for index, chain in enumerate(self.model.route_chains_):
             nodes = [int(node) for node in chain["nodes"]]
             if not chain["closed"]:
@@ -496,9 +519,7 @@ class MetroLayout:
             node_indices = np.rint(
                 np.arange(len(unique_nodes)) * sample_count / len(unique_nodes)
             ).astype(int) % sample_count
-            attached_junctions = list(dict.fromkeys(
-                node for node in unique_nodes if self.landmark_graph_.degree(node) >= 3
-            ))
+            attached_junctions = closed_route_junctions.get(index, [])
             if attached_junctions:
                 # A junction belonging to a cycle is an intersection on the
                 # cycle, not a separate station beside it.  Keep the first
@@ -507,6 +528,11 @@ class MetroLayout:
                 # attached junctions are then moved onto their cycle vertices;
                 # the connecting routes are built from these final positions.
                 anchor = attached_junctions[0]
+                shared_routes = cycle_routes_by_junction.get(anchor, [index])
+                if len(shared_routes) > 1:
+                    occurrence = shared_routes.index(index)
+                    rotation = 2.0 * np.pi * occurrence / len(shared_routes)
+                    theta = rotation + 2.0 * np.pi * np.arange(sample_count) / sample_count
                 anchor_vertex = node_indices[unique_nodes.index(anchor)]
                 anchor_direction = np.asarray([
                     np.cos(theta[anchor_vertex]), np.sin(theta[anchor_vertex]),
