@@ -614,9 +614,28 @@ def plot_embedding_row(
     return layout
 
 
+def _valid_station_node_ids(model, attribute, fallback):
+    """Return station IDs that are resolved in the fitted landmark graph."""
+    raw_ids = getattr(model, attribute, None)
+    if raw_ids is None:
+        raw_ids = fallback
+    graph_nodes = set(model.landmark_graph_.nodes)
+    valid_ids = []
+    for value in raw_ids:
+        node = getattr(value, "node_id", value)
+        if node is None:
+            continue
+        try:
+            if node in graph_nodes:
+                valid_ids.append(node)
+        except TypeError:
+            continue
+    return valid_ids
+
+
 def _plot_stations(axis, model, transform):
-    junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
-    endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
+    junction_ids = _valid_station_node_ids(model, "junction_node_ids_", model.junctions_)
+    endpoint_ids = _valid_station_node_ids(model, "endpoint_node_ids_", model.endpoints_)
     junctions = np.asarray([model.landmark_graph_.nodes[node] for node in junction_ids])
     endpoints = np.asarray([model.landmark_graph_.nodes[node] for node in endpoint_ids])
     if len(junctions):

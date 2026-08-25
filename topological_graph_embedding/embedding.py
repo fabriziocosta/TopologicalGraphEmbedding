@@ -406,6 +406,17 @@ class SplineGraphEmbedding:
             # cycle, so those isolated endpoint votes are not valid terminal
             # regions unless a junction is present.
             endpoints = []
+        elif junctions:
+            # Endpoint votes at the sampled crossing itself are artifacts of
+            # the annulus discretization, not terminal branches.
+            endpoints = [
+                endpoint for endpoint in endpoints
+                if all(
+                    np.linalg.norm(endpoint.center - junction.center)
+                    > 2.0 * self.local_scale_
+                    for junction in junctions
+                )
+            ]
         # Use the coarse tree only to stabilize singular-region candidates.
         # The final routes still come exclusively from the dense weighted kNN
         # substrate below, so this does not reinstate coarsening as the
@@ -483,6 +494,19 @@ class SplineGraphEmbedding:
                 arms = [arm.astype(int) for arm in arms if len(arm)]
                 if len(arms) >= 3:
                     junctions = [JunctionRegion(center.copy(), len(arms), 0.75, [center_index], arms)]
+        if junctions:
+            # The coarse stabilization above can create the junction only
+            # after local endpoint votes have been collected.  Apply the
+            # crossing exclusion again at that point so the sampled crossing
+            # is never promoted to a terminal landmark.
+            endpoints = [
+                endpoint for endpoint in endpoints
+                if all(
+                    np.linalg.norm(endpoint.center - junction.center)
+                    > 2.0 * self.local_scale_
+                    for junction in junctions
+                )
+            ]
         if junctions and not self.linear_structure_:
             desired_endpoints = max(
                 0,
@@ -505,7 +529,13 @@ class SplineGraphEmbedding:
                 )
                 for node in leaves:
                     center = coarse_graph.nodes[node]
-                    if any(np.linalg.norm(center - region.center) <= 2.0 * self.local_scale_ for region in endpoints):
+                    if any(
+                        np.linalg.norm(center - region.center) <= 2.0 * self.local_scale_
+                        for region in junctions
+                    ) or any(
+                        np.linalg.norm(center - region.center) <= 2.0 * self.local_scale_
+                        for region in endpoints
+                    ):
                         continue
                     endpoint_member = int(np.argmin(np.sum((points - center) ** 2, axis=1)))
                     endpoints.append(EndpointRegion(center.copy(), 0.75, [endpoint_member]))
@@ -668,6 +698,7 @@ class SplineGraphEmbedding:
             start: int,
             target: int,
             blocked_edges: set[tuple[int, int]] | None = None,
+            required_branch: int | None = None,
         ) -> CandidatePath | None:
             source_spec = specifications[start]
             target_spec = specifications[target]
@@ -677,16 +708,18 @@ class SplineGraphEmbedding:
                 return None
             blocked_edges = set() if blocked_edges is None else blocked_edges
             queue: list[tuple[float, int, list[int], int | None]] = []
-            best: dict[int, float] = {}
+            best: dict[tuple[int, int | None], float] = {}
             for neighbour, branch in allowed_first_edges(source_spec):
+                if required_branch is not None and branch != required_branch:
+                    continue
                 if routing_graph.key(source_vertex, neighbour) in blocked_edges:
                     continue
                 initial = edge_cost(source_vertex, neighbour)
                 heapq.heappush(queue, (initial, neighbour, [source_vertex, neighbour], branch))
-                best[neighbour] = initial
+                best[(neighbour, branch)] = initial
             while queue:
                 cost, node, path, branch_start = heapq.heappop(queue)
-                if cost > best.get(node, np.inf) + 1e-12:
+                if cost > best.get((node, branch_start), np.inf) + 1e-12:
                     continue
                 if node == target_vertex:
                     branch_end = None
@@ -726,18 +759,30 @@ class SplineGraphEmbedding:
                     if routing_graph.key(node, neighbour) in blocked_edges:
                         continue
                     candidate_cost = cost + edge_cost(node, neighbour)
-                    if candidate_cost < best.get(neighbour, np.inf):
-                        best[neighbour] = candidate_cost
+                    if candidate_cost < best.get((neighbour, branch_start), np.inf):
+                        best[(neighbour, branch_start)] = candidate_cost
                         heapq.heappush(queue, (candidate_cost, neighbour, path + [neighbour], branch_start))
             return None
 
         candidates: list[CandidatePath] = []
         for left in range(len(specifications)):
             for right in range(left + 1, len(specifications)):
-                path = shortest_path(left, right)
-                if path is not None:
-                    candidates.append(path)
+                branch_options: list[int | None] = [None]
+                if specifications[left]["kind"] == "junction":
+                    branch_options = sorted({
+                        branch for _, branch in allowed_first_edges(specifications[left])
+                        if branch is not None
+                    }) or [None]
+                for required_branch in branch_options:
+                    path = shortest_path(
+                        left,
+                        right,
+                        required_branch=required_branch,
+                    )
+                    if path is not None:
+                        candidates.append(path)
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
+        self.candidate_paths_ = list(candidates)
 
         graph = _LandmarkGraph({index: spec["center"] for index, spec in enumerate(specifications)})
         selected: dict[tuple[int, int], CandidatePath] = {}
@@ -760,12 +805,20 @@ class SplineGraphEmbedding:
             parent[right_root] = left_root
             return True
 
-        def valid_degree(candidate: CandidatePath, enforce_branch_slots: bool = True) -> bool:
+        def valid_degree(
+            candidate: CandidatePath,
+            enforce_branch_slots: bool = True,
+            allow_anchor_overflow: bool = False,
+        ) -> bool:
             for node in (candidate.start_landmark, candidate.end_landmark):
                 kind = specifications[node]["kind"]
                 if kind == "endpoint" and degree[node] >= 1:
                     return False
-                if kind == "cycle_anchor" and degree[node] >= 2:
+                if (
+                    kind == "cycle_anchor"
+                    and degree[node] >= 2
+                    and not allow_anchor_overflow
+                ):
                     return False
             if enforce_branch_slots and (
                 candidate.branch_start is not None
@@ -819,10 +872,7 @@ class SplineGraphEmbedding:
                 mark_branches(candidate)
         for candidate in candidates:
             key = graph._key(candidate.start_landmark, candidate.end_landmark)
-            if key in selected or not valid_degree(candidate):
-                continue
-            candidate = reroute_cycle_candidate(candidate)
-            if candidate is None or not valid_degree(candidate):
+            if key in selected:
                 continue
             needs_arm = any(
                 (
@@ -835,17 +885,20 @@ class SplineGraphEmbedding:
                 )
                 for node in (candidate.start_landmark, candidate.end_landmark)
             )
+            if not valid_degree(candidate, allow_anchor_overflow=needs_arm):
+                continue
             if needs_arm:
+                # Incidence completion is allowed to share a dense-substrate
+                # segment near a landmark.  Edge-disjoint rerouting is only
+                # required for the extra edge that intentionally creates a
+                # cycle.
                 selected[key] = candidate
                 degree[candidate.start_landmark] += 1
                 degree[candidate.end_landmark] += 1
                 mark_branches(candidate)
         for candidate in candidates:
             key = graph._key(candidate.start_landmark, candidate.end_landmark)
-            if key in selected or not valid_degree(candidate, enforce_branch_slots=False):
-                continue
-            candidate = reroute_cycle_candidate(candidate)
-            if candidate is None or not valid_degree(candidate, enforce_branch_slots=False):
+            if key in selected:
                 continue
             needs_arm = any(
                 (
@@ -858,6 +911,12 @@ class SplineGraphEmbedding:
                 )
                 for node in (candidate.start_landmark, candidate.end_landmark)
             )
+            if not valid_degree(
+                candidate,
+                enforce_branch_slots=False,
+                allow_anchor_overflow=needs_arm,
+            ):
+                continue
             if needs_arm:
                 selected[key] = candidate
                 degree[candidate.start_landmark] += 1
@@ -936,6 +995,41 @@ class SplineGraphEmbedding:
                     break
             if not removed:
                 break
+
+        if self.linear_structure_ and selected:
+            # The dense kNN shortest path is allowed to zig-zag across a
+            # noisy strip.  For a one-dimensional cloud, PCA ordering is the
+            # topological route and gives the spline every observation in
+            # monotone longitudinal order.
+            centered = points - np.mean(points, axis=0)
+            _, _, components = np.linalg.svd(centered, full_matrices=False)
+            direction = components[0]
+            ordered_vertices = np.argsort(centered @ direction).astype(int).tolist()
+            ordered_coordinate = {
+                vertex: float(points[vertex] @ direction)
+                for vertex in ordered_vertices
+            }
+            for key, candidate in list(selected.items()):
+                left, right = key
+                vertices = ordered_vertices
+                if ordered_coordinate[candidate.vertices[0]] > ordered_coordinate[candidate.vertices[-1]]:
+                    vertices = list(reversed(vertices))
+                route_length = float(sum(
+                    np.linalg.norm(points[a] - points[b])
+                    for a, b in pairwise(vertices)
+                ))
+                selected[key] = CandidatePath(
+                    candidate.start_landmark,
+                    candidate.end_landmark,
+                    vertices,
+                    candidate.total_cost,
+                    route_length,
+                    candidate.tangent_cost,
+                    candidate.electrical_support,
+                    candidate.current_support,
+                    candidate.branch_start,
+                    candidate.branch_end,
+                )
 
         for key, candidate in selected.items():
             graph.add_edge(key[0], key[1], candidate.length)

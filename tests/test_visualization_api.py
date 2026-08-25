@@ -8,7 +8,11 @@ import matplotlib.pyplot as plt
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding.datasets import generate_synthetic_datasets
 from topological_graph_embedding.visualization import MetroLayout
-from topological_graph_embedding.visualization.plots import plot_metro_points, route_colors
+from topological_graph_embedding.visualization.plots import (
+    plot_embedding_row,
+    plot_metro_points,
+    route_colors,
+)
 from topological_graph_embedding.visualization.reduction import fit_reducer
 
 
@@ -31,6 +35,23 @@ def test_plot_network_uses_public_name():
     axis = model.plot_network(points)
     assert axis is not None
     plt.close(axis.figure)
+
+
+def test_plot_embedding_row_ignores_unresolved_station_ids():
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["y"]
+    model = SplineGraphEmbedding(
+        backbone_initialization="topological", n_centroids=12, random_state=0,
+    ).fit(points)
+    result = model.transform(points)
+    model.endpoint_node_ids_ = [*model.endpoint_node_ids_, None]
+
+    figure, axes = plt.subplots(1, 4)
+    plot_embedding_row(
+        axes, points, np.zeros(len(points), dtype=int), model, result,
+        projected_title="data", graph_title="embedding",
+        metro_lines_title="lines", metro_points_title="points",
+    )
+    plt.close(figure)
 
 
 def test_metro_points_use_classes_or_route_ids_as_the_sole_color_source():
