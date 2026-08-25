@@ -864,3 +864,89 @@ def _estimate_persistence(
             _rips_h1_persistence(X, max_points=max_points, random_state=random_state),
             "numpy-after-ripser-error",
         )
+
+
+def _normalize_persistence_diagram(diagram: Array, scale: float) -> Array:
+    """Express a raw persistence diagram in nearest-neighbour scale units."""
+    diagram = np.asarray(diagram, dtype=float)
+    if diagram.size == 0:
+        return np.empty((0, 2), dtype=float)
+    result = diagram.copy()
+    result[:, 0] /= max(float(scale), 1e-12)
+    finite_deaths = np.isfinite(result[:, 1])
+    result[finite_deaths, 1] /= max(float(scale), 1e-12)
+    return result
+
+
+def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
+    """Choose graph vertices near the strongest fundamental cycle candidates."""
+    if count <= 0 or len(graph.points) == 0:
+        return []
+    parent = list(range(len(graph.points)))
+
+    def find(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def union(left: int, right: int) -> bool:
+        left_root, right_root = find(left), find(right)
+        if left_root == right_root:
+            return False
+        parent[right_root] = left_root
+        return True
+
+    tree_adjacency: dict[int, list[int]] = {node: [] for node in range(len(graph.points))}
+    non_tree: list[tuple[float, tuple[int, int]]] = []
+    for edge, length in sorted(graph.edges.items(), key=lambda item: item[1]):
+        left, right = edge
+        if union(left, right):
+            tree_adjacency[left].append(right)
+            tree_adjacency[right].append(left)
+        else:
+            # A high path-to-chord contrast is a useful cycle-anchor proxy.
+            non_tree.append((float(length), edge))
+
+    def tree_path(source: int, target: int) -> list[int]:
+        previous: dict[int, int] = {source: -1}
+        queue = [source]
+        for current in queue:
+            if current == target:
+                break
+            for neighbour in tree_adjacency[current]:
+                if neighbour not in previous:
+                    previous[neighbour] = current
+                    queue.append(neighbour)
+        if target not in previous:
+            return []
+        path = [target]
+        while path[-1] != source:
+            path.append(previous[path[-1]])
+        return path[::-1]
+
+    scored: list[tuple[float, int, int]] = []
+    for direct, (left, right) in non_tree:
+        path = tree_path(left, right)
+        if len(path) < 3:
+            continue
+        path_length = sum(
+            float(graph.edges[graph.key(a, b)]) for a, b in pairwise(path)
+        )
+        scored.append((path_length / max(direct, 1e-12), left, right))
+    scored.sort(reverse=True)
+    anchors: list[int] = []
+    for _, left, right in scored:
+        for vertex in (left, right):
+            if vertex not in anchors:
+                anchors.append(vertex)
+            if len(anchors) >= max(2, 2 * count):
+                return anchors
+    if not anchors:
+        # A numerically weak cycle estimate still needs a stable pair of
+        # anchors so the selector can represent one closed route.
+        anchors = [0]
+        farthest = int(np.argmax(np.linalg.norm(graph.points - graph.points[0], axis=1)))
+        if farthest != 0:
+            anchors.append(farthest)
+    return anchors[: max(2, 2 * count)]

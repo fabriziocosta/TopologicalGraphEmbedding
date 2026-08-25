@@ -245,10 +245,36 @@ def _target_is_continuous(labels) -> bool:
     return not np.allclose(unique, np.round(unique)) or len(unique) > 20
 
 
+def _has_categorical_target(labels, n_samples: int | None = None) -> bool:
+    """Return whether labels provide multiple categorical classes to display."""
+    if labels is None:
+        return False
+    values = np.asarray(labels)
+    if values.ndim != 1 or (n_samples is not None and len(values) != n_samples):
+        return False
+    if not len(values) or type_of_target(values) not in {'binary', 'multiclass'}:
+        return False
+    return len(np.unique(values)) > 1
+
+
+def _has_continuous_target(labels, n_samples: int | None = None) -> bool:
+    """Return whether labels provide a continuous regression target to display."""
+    if labels is None:
+        return False
+    values = np.asarray(labels)
+    return (
+        values.ndim == 1
+        and (n_samples is None or len(values) == n_samples)
+        and len(values) > 0
+        and _target_is_continuous(values)
+    )
+
+
 def _target_scatter(axis, x, y, labels, **kwargs):
     """Scatter targets with categorical or regression-appropriate colors."""
+    categorical = kwargs.pop('categorical', False)
     values = np.asarray(labels)
-    continuous = _target_is_continuous(values)
+    continuous = _target_is_continuous(values) and not categorical
     if not np.issubdtype(values.dtype, np.number):
         _, values = np.unique(values, return_inverse=True)
     scatter_kwargs = {
@@ -475,8 +501,9 @@ def plot_metro_points(
 
     Set ``show_nodes=True`` to draw the junction discs and endpoint markers
     on top of the observations.  They are hidden by default so this panel
-    focuses on the point distribution.  Point fill colors encode ``labels``;
-    route-colored outlines keep the spline assignment visible as well.
+    focuses on the point distribution.  When multiple categorical classes are
+    available, point colors encode only those classes.  Otherwise, point
+    colors encode the assigned route ID.
     """
     if layout is None:
         layout = MetroLayout(
@@ -486,11 +513,27 @@ def plot_metro_points(
     if colors is None:
         colors = route_colors(model)
     route_ids = np.asarray(result.route_id, dtype=int)
-    route_edges = colors[np.clip(route_ids, 0, len(colors) - 1)]
-    _target_scatter(
-        axis, displayed_points[:, 0], displayed_points[:, 1], labels,
-        s=14, alpha=0.60, edgecolors=route_edges, linewidths=0.4, zorder=2,
-    )
+    scatter_kwargs = {
+        's': 14,
+        'alpha': 0.60,
+        'zorder': 2,
+    }
+    if _has_categorical_target(labels, len(route_ids)):
+        _target_scatter(
+            axis, displayed_points[:, 0], displayed_points[:, 1], labels,
+            categorical=True, edgecolors='none', **scatter_kwargs,
+        )
+    elif _has_continuous_target(labels, len(route_ids)):
+        _target_scatter(
+            axis, displayed_points[:, 0], displayed_points[:, 1], labels,
+            edgecolors='none', **scatter_kwargs,
+        )
+    else:
+        route_points = colors[np.clip(route_ids, 0, len(colors) - 1)]
+        axis.scatter(
+            displayed_points[:, 0], displayed_points[:, 1],
+            color=route_points, **scatter_kwargs,
+        )
     if show_nodes:
         _plot_metro_stations(axis, model, layout)
     _format_metro_axis(axis, title)

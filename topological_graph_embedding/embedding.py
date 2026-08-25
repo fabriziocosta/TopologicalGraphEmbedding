@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+import heapq
 from typing import Any
 
 import numpy as np
@@ -14,18 +15,33 @@ from ._frames import (
     _normal_coordinates,
 )
 from ._topology import (
+    CandidatePath,
+    EndpointRegion,
+    JunctionRegion,
+    _LandmarkGraph,
     _as_point_cloud,
+    _cycle_anchor_vertices,
     _estimate_persistence,
+    _estimate_local_topology,
     _extract_chains,
     _is_nearly_linear,
     _kmeans,
     _local_scale,
     _merge_nearby_junctions,
     _minimum_spanning_tree,
+    _normalize_persistence_diagram,
     _ordered_path_graph,
     _prune_short_terminal_branches,
     _standardize,
     _symmetric_knn_edges,
+    _weighted_symmetric_knn_graph,
+)
+from ._electrical import _electrical_flow, _effective_resistance, _kron_reduction
+from ._local_geometry import (
+    _attach_junction_directions,
+    _departure_angle,
+    _estimate_local_tangents,
+    _tangent_inconsistency,
 )
 from .results import EmbeddingResult
 
@@ -49,6 +65,24 @@ class SplineGraphEmbedding:
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        backbone_initialization: str = "coarsen",
+        detect_cycles: bool = True,
+        detect_junctions: bool = True,
+        junction_scales: int | Sequence[float] = 6,
+        junction_inner_fraction: float = 0.25,
+        junction_confidence: float = 0.7,
+        use_local_pca: bool = True,
+        local_pca_neighbors: int = 20,
+        max_branch_angle_degrees: float = 45.0,
+        use_effective_resistance: bool = False,
+        use_electrical_flow: bool = False,
+        use_kron_reduction: bool = False,
+        routing_length_weight: float = 1.0,
+        routing_tangent_weight: float = 1.0,
+        routing_density_weight: float = 0.5,
+        routing_resistance_weight: float = 0.0,
+        routing_current_weight: float = 0.0,
+        use_tangent_boundary_conditions: bool = True,
     ) -> None:
         if n_centroids < 3:
             raise ValueError("n_centroids must be at least 3")
@@ -60,6 +94,25 @@ class SplineGraphEmbedding:
             raise ValueError("spline_samples_per_node must be at least 1")
         if topology_neighbors < 2:
             raise ValueError("topology_neighbors must be at least 2")
+        if backbone_initialization not in {"coarsen", "topological"}:
+            raise ValueError("backbone_initialization must be 'coarsen' or 'topological'")
+        if local_pca_neighbors < 2:
+            raise ValueError("local_pca_neighbors must be at least 2")
+        if not 0.0 < junction_inner_fraction < 1.0:
+            raise ValueError("junction_inner_fraction must be in (0, 1)")
+        if not 0.0 <= junction_confidence <= 1.0:
+            raise ValueError("junction_confidence must be in [0, 1]")
+        if max_branch_angle_degrees <= 0.0 or max_branch_angle_degrees > 180.0:
+            raise ValueError("max_branch_angle_degrees must be in (0, 180]")
+        routing_weights = (
+            routing_length_weight,
+            routing_tangent_weight,
+            routing_density_weight,
+            routing_resistance_weight,
+            routing_current_weight,
+        )
+        if any(value < 0.0 or not np.isfinite(value) for value in routing_weights):
+            raise ValueError("routing weights must be finite and non-negative")
         if spline_smoothing < 0 or not np.isfinite(spline_smoothing):
             raise ValueError("spline_smoothing must be finite and non-negative")
         if prune_branch_factor < 0 or not np.isfinite(prune_branch_factor):
@@ -87,6 +140,24 @@ class SplineGraphEmbedding:
         self.spline_samples_per_node = int(spline_samples_per_node)
         self.linear_structure_tolerance = float(linear_structure_tolerance)
         self.topology_neighbors = int(topology_neighbors)
+        self.backbone_initialization = str(backbone_initialization)
+        self.detect_cycles = bool(detect_cycles)
+        self.detect_junctions = bool(detect_junctions)
+        self.junction_scales = junction_scales
+        self.junction_inner_fraction = float(junction_inner_fraction)
+        self.junction_confidence = float(junction_confidence)
+        self.use_local_pca = bool(use_local_pca)
+        self.local_pca_neighbors = int(local_pca_neighbors)
+        self.max_branch_angle_degrees = float(max_branch_angle_degrees)
+        self.use_effective_resistance = bool(use_effective_resistance)
+        self.use_electrical_flow = bool(use_electrical_flow)
+        self.use_kron_reduction = bool(use_kron_reduction)
+        self.routing_length_weight = float(routing_length_weight)
+        self.routing_tangent_weight = float(routing_tangent_weight)
+        self.routing_density_weight = float(routing_density_weight)
+        self.routing_resistance_weight = float(routing_resistance_weight)
+        self.routing_current_weight = float(routing_current_weight)
+        self.use_tangent_boundary_conditions = bool(use_tangent_boundary_conditions)
         self._fitted = False
 
     def fit(self, X: Array | Sequence[Sequence[float]]) -> SplineGraphEmbedding:
@@ -111,17 +182,29 @@ class SplineGraphEmbedding:
             points, max_points=self.persistence_max_points, random_state=self.random_state
         )
         self.local_scale_ = _local_scale(points)
-        if self.persistence_threshold is None:
+        self.normalized_persistence_diagram_ = _normalize_persistence_diagram(
+            self.persistence_diagram_, self.local_scale_
+        )
+        if self.backbone_initialization == "topological":
+            # Topological mode uses scale-free persistence.  The legacy mode
+            # retains its historical distance-unit threshold semantics.
+            threshold = 4.0 if self.persistence_threshold is None else float(self.persistence_threshold)
+            self.persistence_threshold_ = float(threshold)
+            diagram = self.normalized_persistence_diagram_
+        elif self.persistence_threshold is None:
             threshold = 4.0 * self.local_scale_
             self.persistence_threshold_ = float(threshold)
+            diagram = self.persistence_diagram_
         else:
             self.persistence_threshold_ = float(self.persistence_threshold)
-        if len(self.persistence_diagram_):
-            lifetimes = self.persistence_diagram_[:, 1] - self.persistence_diagram_[:, 0]
+            diagram = self.persistence_diagram_
+        if len(diagram):
+            lifetimes = diagram[:, 1] - diagram[:, 0]
             significant = np.isfinite(lifetimes) & (lifetimes >= self.persistence_threshold_)
             self.persistent_cycle_count_ = int(np.sum(significant))
         else:
             self.persistent_cycle_count_ = 0
+        self.cycle_count_ = self.persistent_cycle_count_
         self.requested_cycle_count_ = min(self.max_cycles, self.persistent_cycle_count_)
 
         self.centroids_ = _kmeans(points, self.n_centroids, self.random_state)
@@ -132,7 +215,12 @@ class SplineGraphEmbedding:
         self.linear_structure_ = _is_nearly_linear(
             centroids_original, self.linear_structure_tolerance
         )
-        if self.linear_structure_:
+        self.backbone_paths_ = None
+        if self.backbone_initialization == "topological":
+            graph, backbone_paths = self._topological_backbone(points, self.centroids_)
+            self.backbone_paths_ = backbone_paths
+            self.merge_junction_distance_ = 0.0
+        elif self.linear_structure_:
             # A noisy sample of a line can produce a branched MST and a
             # borderline H1 bar.  A PCA-ordered chain is the appropriate
             # low-complexity skeleton for this geometry.
@@ -149,18 +237,24 @@ class SplineGraphEmbedding:
                 merge_distance = self.merge_junction_distance
             self.merge_junction_distance_ = float(merge_distance)
             graph = _merge_nearby_junctions(graph, merge_distance)
+            self.backbone_paths_ = None
         self.landmark_graph_ = graph
-        self.topology_candidate_edges_ = _symmetric_knn_edges(
-            self.landmark_graph_, self.topology_neighbors,
-        )
+        self.backbone_graph_ = graph
+        if self.backbone_paths_ is None:
+            self.topology_candidate_edges_ = _symmetric_knn_edges(
+                self.landmark_graph_, self.topology_neighbors,
+            )
+        else:
+            self.topology_candidate_edges_ = set()
 
-        target_cycles = self.requested_cycle_count_
-        while self.landmark_graph_.cycle_rank() < target_cycles:
-            candidate = self._best_cycle_edge()
-            if candidate is None:
-                break
-            left, right, weight = candidate
-            self.landmark_graph_.add_edge(left, right, weight)
+        if self.backbone_paths_ is None:
+            target_cycles = self.requested_cycle_count_
+            while self.landmark_graph_.cycle_rank() < target_cycles:
+                candidate = self._best_cycle_edge()
+                if candidate is None:
+                    break
+                left, right, weight = candidate
+                self.landmark_graph_.add_edge(left, right, weight)
 
         self.realized_cycle_count_ = self.landmark_graph_.cycle_rank()
         self.topology_shortfall_ = max(0, target_cycles - self.realized_cycle_count_)
@@ -171,8 +265,19 @@ class SplineGraphEmbedding:
                 RuntimeWarning,
                 stacklevel=2,
             )
-        self.junctions_ = [node for node in self.landmark_graph_.nodes if self.landmark_graph_.degree(node) >= 3]
-        self.endpoints_ = [node for node in self.landmark_graph_.nodes if self.landmark_graph_.degree(node) == 1]
+        if self.backbone_paths_ is None:
+            self.junctions_ = [node for node in self.landmark_graph_.nodes if self.landmark_graph_.degree(node) >= 3]
+            self.endpoints_ = [node for node in self.landmark_graph_.nodes if self.landmark_graph_.degree(node) == 1]
+            self.junction_regions_ = []
+            self.endpoint_regions_ = []
+        self.junction_node_ids_ = [
+            region.node_id if isinstance(region, JunctionRegion) else int(region)
+            for region in self.junctions_
+        ]
+        self.endpoint_node_ids_ = [
+            region.node_id if isinstance(region, EndpointRegion) else int(region)
+            for region in self.endpoints_
+        ]
         self.route_chains_ = _extract_chains(self.landmark_graph_)
         if not self.route_chains_:
             # Pruning can collapse a very small or fully duplicated graph to a
@@ -182,7 +287,10 @@ class SplineGraphEmbedding:
             if nodes:
                 self.route_chains_ = [{"nodes": [nodes[0]], "closed": False}]
         for chain in self.route_chains_:
-            chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
+            if self.backbone_paths_ is None:
+                chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
+            else:
+                chain["points"] = self._chain_support_points(chain)
         self.routes_ = [
             _fit_curve(
                 chain["points"],
@@ -199,6 +307,368 @@ class SplineGraphEmbedding:
         ]
         self._fitted = True
         return self
+
+    def _topological_backbone(
+        self,
+        points: Array,
+        centroids: Array,
+    ) -> tuple[_LandmarkGraph, dict[tuple[int, int], CandidatePath]]:
+        """Infer a constrained landmark graph from the dense routing substrate."""
+        routing_graph, local_scales = _weighted_symmetric_knn_graph(
+            points, self.topology_neighbors
+        )
+        self.routing_graph_ = routing_graph
+        self.local_graph_scales_ = local_scales
+        if self.use_local_pca:
+            self.local_tangents_ = _estimate_local_tangents(
+                points, routing_graph, self.local_pca_neighbors
+            )
+        else:
+            self.local_tangents_ = np.zeros_like(points)
+
+        if self.detect_junctions:
+            junctions, endpoints, branch_counts, branch_confidence = _estimate_local_topology(
+                points,
+                routing_graph,
+                centroids,
+                local_scales=local_scales,
+                inner_radius_fraction=self.junction_inner_fraction,
+                min_junction_confidence=self.junction_confidence,
+                scales=self.junction_scales,
+                merge_distance=self.merge_junction_distance,
+            )
+        else:
+            junctions, endpoints = [], []
+            branch_counts = np.empty(0, dtype=int)
+            branch_confidence = np.empty(0, dtype=float)
+        self.junction_regions_ = junctions
+        self.endpoint_regions_ = endpoints
+        self.junctions_ = junctions
+        self.endpoints_ = endpoints
+        self.branch_counts_ = branch_counts
+        self.branch_confidence_ = branch_confidence
+        self.topology_confidence_ = branch_confidence.copy()
+
+        # Build compact logical landmarks while retaining their original graph
+        # vertices for routing and electrical calculations.
+        specifications: list[dict[str, Any]] = []
+        used_vertices: list[int] = []
+
+        def nearest_vertex(center: Array) -> int:
+            distances = np.sum((points - center) ** 2, axis=1)
+            return int(np.argmin(distances))
+
+        def append_spec(kind: str, center: Array, region: Any = None, vertex: int | None = None) -> None:
+            selected_vertex = nearest_vertex(center) if vertex is None else int(vertex)
+            if any(
+                np.linalg.norm(points[selected_vertex] - points[spec["vertex"]])
+                <= max(self.local_scale_, 1e-8)
+                and kind == spec["kind"]
+                for spec in specifications
+            ):
+                return
+            landmark_id = len(specifications)
+            if region is not None:
+                region.node_id = landmark_id
+            specifications.append({
+                "kind": kind,
+                "center": np.asarray(center, dtype=float).copy(),
+                "vertex": selected_vertex,
+                "region": region,
+            })
+            used_vertices.append(selected_vertex)
+
+        for region in junctions:
+            append_spec("junction", region.center, region)
+        for region in endpoints:
+            append_spec("endpoint", region.center, region)
+
+        cycle_target = self.requested_cycle_count_ if self.detect_cycles else 0
+        anchor_vertices = _cycle_anchor_vertices(routing_graph, cycle_target)
+        for vertex in anchor_vertices:
+            if any(
+                np.linalg.norm(points[vertex] - points[other]) <= max(self.local_scale_, 1e-8)
+                for other in used_vertices
+            ):
+                continue
+            append_spec("cycle_anchor", points[vertex], vertex=vertex)
+
+        if not specifications and len(points):
+            first = int(np.argmin(np.sum((points - np.mean(points, axis=0)) ** 2, axis=1)))
+            farthest = int(np.argmax(np.linalg.norm(points - points[first], axis=1)))
+            append_spec("endpoint", points[first], vertex=first)
+            if farthest != first:
+                append_spec("endpoint", points[farthest], vertex=farthest)
+
+        if self.use_local_pca:
+            branch_directions = _attach_junction_directions(points, junctions)
+        else:
+            branch_directions = {index: np.empty((0, points.shape[1])) for index in range(len(junctions))}
+        self.junction_branch_directions_ = {}
+        for index, region in enumerate(junctions):
+            node_id = region.node_id
+            if node_id is not None:
+                self.junction_branch_directions_[node_id] = branch_directions.get(
+                    index, np.empty((0, points.shape[1]), dtype=float)
+                )
+
+        self.effective_resistance_ = {}
+        self.edge_leverage_ = {}
+        self.electrical_traffic_ = {}
+        electrical_pseudoinverse = None
+        if self.use_effective_resistance or self.routing_resistance_weight > 0.0:
+            electrical_pseudoinverse, self.effective_resistance_, self.edge_leverage_ = (
+                _effective_resistance(routing_graph)
+            )
+        if self.use_electrical_flow or self.routing_current_weight > 0.0:
+            pair_vertices = [spec["vertex"] for spec in specifications]
+            pairs = [
+                (pair_vertices[left], pair_vertices[right])
+                for left in range(len(pair_vertices))
+                for right in range(left + 1, len(pair_vertices))
+            ]
+            self.electrical_traffic_ = _electrical_flow(routing_graph, pairs)
+
+        if self.use_kron_reduction:
+            landmark_vertices = [spec["vertex"] for spec in specifications]
+            self.kron_laplacian_, retained = _kron_reduction(routing_graph, landmark_vertices)
+            self.kron_vertex_ids_ = retained
+            conductance_graph = _LandmarkGraph({
+                index: spec["center"] for index, spec in enumerate(specifications)
+            })
+            for left in range(len(retained)):
+                for right in range(left + 1, len(retained)):
+                    conductance = -float(self.kron_laplacian_[left, right])
+                    if conductance > 1e-10:
+                        conductance_graph.add_edge(left, right, conductance)
+            self.landmark_conductance_graph_ = conductance_graph
+        else:
+            self.kron_laplacian_ = None
+            self.kron_vertex_ids_ = np.empty(0, dtype=int)
+            self.landmark_conductance_graph_ = None
+
+        edge_lengths = np.asarray(list(routing_graph.edges.values()), dtype=float)
+        reference_length = float(np.median(edge_lengths[edge_lengths > 1e-12])) if np.any(edge_lengths > 1e-12) else 1.0
+        leverage_values = np.asarray(list(self.edge_leverage_.values()), dtype=float)
+        leverage_reference = float(np.max(leverage_values)) if len(leverage_values) else 1.0
+        traffic_reference = 1.0
+        angle_threshold = 1.0 - np.cos(np.deg2rad(self.max_branch_angle_degrees))
+
+        def edge_cost(left: int, right: int) -> float:
+            edge = routing_graph.key(left, right)
+            length_term = routing_graph.edges[edge] / max(reference_length, 1e-12)
+            tangent_term = _tangent_inconsistency(
+                self.local_tangents_[left], self.local_tangents_[right]
+            )
+            density_term = 1.0 / max(routing_graph.edge_density.get(edge, 0.0), 1e-6)
+            resistance_support = self.edge_leverage_.get(edge, 0.0) / max(leverage_reference, 1e-12)
+            current_support = self.electrical_traffic_.get(edge, 0.0) / max(traffic_reference, 1e-12)
+            cost = (
+                self.routing_length_weight * length_term
+                + self.routing_tangent_weight * tangent_term
+                + self.routing_density_weight * density_term
+                - self.routing_resistance_weight * resistance_support
+                - self.routing_current_weight * current_support
+            )
+            return max(float(cost), 1e-8)
+
+        def allowed_first_edges(specification: dict[str, Any]) -> list[tuple[int, int | None]]:
+            source = specification["vertex"]
+            if specification["kind"] != "junction":
+                return [(neighbour, None) for neighbour in routing_graph.adjacency[source]]
+            directions = self.junction_branch_directions_.get(specification["region"].node_id, np.empty((0, points.shape[1])))
+            candidates: list[tuple[int, int | None, float]] = []
+            for neighbour in routing_graph.adjacency[source]:
+                vector = points[neighbour] - specification["center"]
+                if len(directions):
+                    scores = [_departure_angle(direction, vector) for direction in directions]
+                    branch = int(np.argmin(scores))
+                    if scores[branch] <= angle_threshold:
+                        candidates.append((neighbour, branch, scores[branch]))
+                else:
+                    candidates.append((neighbour, None, 0.0))
+            candidates.sort(key=lambda item: item[2])
+            return [(neighbour, branch) for neighbour, branch, _ in candidates]
+
+        def shortest_path(start: int, target: int) -> CandidatePath | None:
+            source_spec = specifications[start]
+            target_spec = specifications[target]
+            source_vertex = source_spec["vertex"]
+            target_vertex = target_spec["vertex"]
+            if source_vertex == target_vertex:
+                return None
+            queue: list[tuple[float, int, list[int], int | None]] = []
+            best: dict[int, float] = {}
+            for neighbour, branch in allowed_first_edges(source_spec):
+                initial = edge_cost(source_vertex, neighbour)
+                heapq.heappush(queue, (initial, neighbour, [source_vertex, neighbour], branch))
+                best[neighbour] = initial
+            while queue:
+                cost, node, path, branch_start = heapq.heappop(queue)
+                if cost > best.get(node, np.inf) + 1e-12:
+                    continue
+                if node == target_vertex:
+                    branch_end = None
+                    if target_spec["kind"] == "junction" and len(path) >= 2:
+                        directions = self.junction_branch_directions_.get(
+                            target_spec["region"].node_id, np.empty((0, points.shape[1]))
+                        )
+                        vector = points[target_vertex] - points[path[-2]]
+                        if len(directions):
+                            scores = [_departure_angle(direction, vector) for direction in directions]
+                            branch_end = int(np.argmin(scores))
+                            if scores[branch_end] > angle_threshold:
+                                continue
+                    length = float(sum(
+                        np.linalg.norm(points[left] - points[right])
+                        for left, right in zip(path[:-1], path[1:])
+                    ))
+                    tangent_cost = float(sum(
+                        _tangent_inconsistency(self.local_tangents_[left], self.local_tangents_[right])
+                        for left, right in zip(path[:-1], path[1:])
+                    ))
+                    support = float(np.mean([
+                        self.edge_leverage_.get(routing_graph.key(left, right), 0.0)
+                        for left, right in zip(path[:-1], path[1:])
+                    ])) if len(path) > 1 else 0.0
+                    traffic = float(np.mean([
+                        self.electrical_traffic_.get(routing_graph.key(left, right), 0.0)
+                        for left, right in zip(path[:-1], path[1:])
+                    ])) if len(path) > 1 else 0.0
+                    return CandidatePath(
+                        start, target, path, float(cost), length, tangent_cost,
+                        support, traffic, branch_start, branch_end,
+                    )
+                for neighbour in routing_graph.adjacency[node]:
+                    if neighbour in path:
+                        continue
+                    candidate_cost = cost + edge_cost(node, neighbour)
+                    if candidate_cost < best.get(neighbour, np.inf):
+                        best[neighbour] = candidate_cost
+                        heapq.heappush(queue, (candidate_cost, neighbour, path + [neighbour], branch_start))
+            return None
+
+        candidates: list[CandidatePath] = []
+        for left in range(len(specifications)):
+            for right in range(left + 1, len(specifications)):
+                path = shortest_path(left, right)
+                if path is not None:
+                    candidates.append(path)
+        candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
+
+        graph = _LandmarkGraph({index: spec["center"] for index, spec in enumerate(specifications)})
+        selected: dict[tuple[int, int], CandidatePath] = {}
+        parent = list(range(len(specifications)))
+        degree = np.zeros(len(specifications), dtype=int)
+
+        def find(node: int) -> int:
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        def union(left: int, right: int) -> bool:
+            left_root, right_root = find(left), find(right)
+            if left_root == right_root:
+                return False
+            parent[right_root] = left_root
+            return True
+
+        def valid_degree(candidate: CandidatePath) -> bool:
+            for node in (candidate.start_landmark, candidate.end_landmark):
+                kind = specifications[node]["kind"]
+                if kind == "endpoint" and degree[node] >= 1:
+                    return False
+            return True
+
+        for candidate in candidates:
+            if not valid_degree(candidate):
+                continue
+            if union(candidate.start_landmark, candidate.end_landmark):
+                key = graph._key(candidate.start_landmark, candidate.end_landmark)
+                selected[key] = candidate
+                degree[candidate.start_landmark] += 1
+                degree[candidate.end_landmark] += 1
+        for candidate in candidates:
+            key = graph._key(candidate.start_landmark, candidate.end_landmark)
+            if key in selected or not valid_degree(candidate):
+                continue
+            needs_arm = any(
+                specifications[node]["kind"] == "junction"
+                and degree[node] < max(1, specifications[node]["region"].branch_count)
+                for node in (candidate.start_landmark, candidate.end_landmark)
+            )
+            if needs_arm:
+                selected[key] = candidate
+                degree[candidate.start_landmark] += 1
+                degree[candidate.end_landmark] += 1
+
+        if self.detect_cycles and self.requested_cycle_count_ > 0:
+            for candidate in candidates:
+                key = graph._key(candidate.start_landmark, candidate.end_landmark)
+                if key in selected or not valid_degree(candidate):
+                    continue
+                selected[key] = candidate
+                degree[candidate.start_landmark] += 1
+                degree[candidate.end_landmark] += 1
+                components = len(specifications)
+                component_parent = list(range(len(specifications)))
+                for selected_left, selected_right in selected:
+                    left_root, right_root = selected_left, selected_right
+                    while component_parent[left_root] != left_root:
+                        left_root = component_parent[left_root]
+                    while component_parent[right_root] != right_root:
+                        right_root = component_parent[right_root]
+                    if left_root != right_root:
+                        component_parent[right_root] = left_root
+                        components -= 1
+                cycle_rank = len(selected) - len(specifications) + components
+                if cycle_rank >= self.requested_cycle_count_:
+                    break
+
+        for key, candidate in selected.items():
+            graph.add_edge(key[0], key[1], candidate.length)
+        self.junction_degree_shortfall_ = {
+            index: max(0, specifications[index]["region"].branch_count - degree[index])
+            for index in range(len(specifications))
+            if specifications[index]["kind"] == "junction"
+        }
+        self.endpoint_degree_violations_ = [
+            index for index in range(len(specifications))
+            if specifications[index]["kind"] == "endpoint" and degree[index] != 1
+        ]
+        if any(self.junction_degree_shortfall_.values()) or self.endpoint_degree_violations_:
+            warnings.warn(
+                "Topological landmark constraints could not all be realized by the routing substrate.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+        return graph, selected
+
+    def _chain_support_points(self, chain: dict[str, Any]) -> Array:
+        """Concatenate stored point-level paths for one abstract route chain."""
+        nodes = list(chain["nodes"])
+        pairs = list(zip(nodes[:-1], nodes[1:]))
+        if chain.get("closed") and len(nodes) > 1:
+            pairs.append((nodes[-1], nodes[0]))
+        segments: list[Array] = []
+        for left, right in pairs:
+            candidate = self.backbone_paths_.get(self.landmark_graph_._key(left, right))
+            if candidate is None:
+                continue
+            vertices = list(candidate.vertices)
+            forward = candidate.start_landmark == left
+            if not forward:
+                vertices.reverse()
+            support = np.asarray([self.routing_graph_.points[index] for index in vertices], dtype=float)
+            support[0] = self.landmark_graph_.nodes[left]
+            support[-1] = self.landmark_graph_.nodes[right]
+            if segments and np.allclose(segments[-1][-1], support[0]):
+                support = support[1:]
+            segments.append(support)
+        if not segments:
+            return np.asarray([self.landmark_graph_.nodes[node] for node in nodes], dtype=float)
+        return np.vstack(segments)
 
     def _anchor_closed_junctions(self) -> None:
         """Make closed spline samples pass exactly through graph junctions."""
