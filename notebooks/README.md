@@ -9,7 +9,9 @@ edit its parameters and rerun the function call. The hypercube dimension is cont
 Notebook workflows use `backbone_initialization="topological"` explicitly.
 This keeps notebook figures on the topology-aware initialization path even
 though the library estimator retains `"coarsen"` as its backward-compatible
-default.
+default. The workflow wrappers also silence the expected constraint-warning
+when a noisy interactive refit cannot realize every requested incidence;
+direct estimator use still exposes that diagnostic normally.
 
 The final notebook cell calls the shared `ipywidgets` viewer for selecting a
 dataset and interactively refitting it. Controls are grouped into **Data**,

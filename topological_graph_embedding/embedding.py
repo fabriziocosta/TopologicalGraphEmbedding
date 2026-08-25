@@ -331,6 +331,47 @@ class SplineGraphEmbedding:
         )
         self.routing_graph_ = routing_graph
         self.local_graph_scales_ = local_scales
+        routing_components = [
+            np.asarray(component, dtype=int)
+            for component in getattr(routing_graph, "original_components", [])
+        ]
+        self.routing_components_ = routing_components
+        component_by_vertex = {
+            int(vertex): component_id
+            for component_id, component in enumerate(routing_components)
+            for vertex in component
+        }
+        component_cycle_counts: list[int] = []
+        for component_id, component in enumerate(routing_components):
+            if len(routing_components) == 1 or len(component) < 8:
+                component_cycle_counts.append(0)
+                continue
+            component_diagram, _ = _estimate_persistence(
+                points[component],
+                max_points=self.persistence_max_points,
+                random_state=self.random_state + component_id + 1,
+            )
+            component_normalized = _normalize_persistence_diagram(
+                component_diagram,
+                _local_scale(points[component]),
+            )
+            lifetimes = (
+                component_normalized[:, 1] - component_normalized[:, 0]
+                if len(component_normalized) else np.empty(0)
+            )
+            component_cycle_counts.append(int(np.sum(
+                np.isfinite(lifetimes) & (lifetimes >= self.persistence_threshold_)
+            )))
+        self.component_cycle_counts_ = component_cycle_counts
+        if len(routing_components) > 1:
+            component_cycle_total = min(
+                self.max_cycles,
+                int(sum(component_cycle_counts)),
+            )
+            if component_cycle_total > self.requested_cycle_count_:
+                self.requested_cycle_count_ = component_cycle_total
+                self.persistent_cycle_count_ = component_cycle_total
+                self.cycle_count_ = component_cycle_total
         if self.use_local_pca:
             self.local_tangents_ = _estimate_local_tangents(
                 points, routing_graph, self.local_pca_neighbors
@@ -423,10 +464,16 @@ class SplineGraphEmbedding:
         # backbone-construction mechanism.
         coarse_graph = _merge_nearby_junctions(
             _minimum_spanning_tree(centroids),
-            8.0 * self.local_scale_ if self.merge_junction_distance is None else self.merge_junction_distance,
+            12.0 * self.local_scale_ if self.merge_junction_distance is None else self.merge_junction_distance,
         )
         coarse_junction_nodes = [] if (
-            self.linear_structure_ or not self.detect_junctions or central_junction_locked
+            self.linear_structure_
+            or not self.detect_junctions
+            or central_junction_locked
+            or (
+                len(routing_components) > 1
+                and sum(component_cycle_counts) >= len(routing_components)
+            )
         ) else [
             node for node in coarse_graph.nodes if coarse_graph.degree(node) >= 3
         ]
@@ -520,6 +567,21 @@ class SplineGraphEmbedding:
                     node for node in coarse_graph.nodes
                     if coarse_graph.degree(node) == 1
                 ]
+                if desired_endpoints >= 3 and len(leaves) >= desired_endpoints:
+                    # For multi-arm crossings, the coarse tree has a much
+                    # more stable terminal set than isolated annulus votes.
+                    # In particular, it prevents two noisy votes on one arm
+                    # from replacing the opposite arm of an X or Y.
+                    leaves.sort()
+                    endpoints = [
+                        EndpointRegion(
+                            coarse_graph.nodes[node].copy(),
+                            0.85,
+                            [int(np.argmin(np.sum((points - coarse_graph.nodes[node]) ** 2, axis=1)))],
+                        )
+                        for node in leaves[:desired_endpoints]
+                    ]
+                    leaves = []
                 leaves.sort(
                     key=lambda node: min(
                         np.linalg.norm(coarse_graph.nodes[node] - region.center)
@@ -587,7 +649,40 @@ class SplineGraphEmbedding:
             append_spec("endpoint", region.center, region)
 
         cycle_target = self.requested_cycle_count_ if self.detect_cycles else 0
-        anchor_vertices = _cycle_anchor_vertices(routing_graph, cycle_target)
+        if (
+            cycle_target > 0
+            and len(routing_components) > 1
+            and sum(component_cycle_counts) > 0
+        ):
+            # The bridge retained for electrical diagnostics can otherwise
+            # make the global cycle-anchor spread spend all anchors on one
+            # component.  Allocate anchors per persistent component.
+            anchor_vertices: list[int] = []
+            for component, component_cycles in zip(
+                routing_components, component_cycle_counts
+            ):
+                target = 3 * int(component_cycles)
+                if target <= 0 or len(component) == 0:
+                    continue
+                selected_component = [int(component[0])]
+                while len(selected_component) < min(target, len(component)):
+                    distances = np.min(
+                        np.asarray([
+                            np.linalg.norm(points[component] - points[anchor], axis=1)
+                            for anchor in selected_component
+                        ]),
+                        axis=0,
+                    )
+                    distances[
+                        [int(np.flatnonzero(component == anchor)[0]) for anchor in selected_component]
+                    ] = -np.inf
+                    next_index = int(np.argmax(distances))
+                    if not np.isfinite(distances[next_index]):
+                        break
+                    selected_component.append(int(component[next_index]))
+                anchor_vertices.extend(selected_component)
+        else:
+            anchor_vertices = _cycle_anchor_vertices(routing_graph, cycle_target)
         for vertex in anchor_vertices:
             if any(
                 np.linalg.norm(points[vertex] - points[other]) <= max(self.local_scale_, 1e-8)
@@ -614,6 +709,62 @@ class SplineGraphEmbedding:
                 self.junction_branch_directions_[node_id] = branch_directions.get(
                     index, np.empty((0, points.shape[1]), dtype=float)
                 )
+
+        # A junction landmark is represented by one observed vertex, which
+        # can miss an arm in a noisy kNN query.  Add short virtual incidence
+        # links to the nearest point in each PCA arm direction.  These links
+        # stay local, retain the dense graph as the routing substrate, and
+        # make the angle constraint independent of which observation happens
+        # to be nearest the junction center.
+        if self.use_local_pca:
+            for region in junctions:
+                if region.node_id is None:
+                    continue
+                source = specifications[region.node_id]["vertex"]
+                directions = self.junction_branch_directions_.get(region.node_id, np.empty((0, points.shape[1])))
+                if not len(directions):
+                    continue
+                component = component_by_vertex.get(source)
+                candidates = np.flatnonzero(
+                    np.linalg.norm(points - region.center, axis=1)
+                    <= 8.0 * self.local_scale_
+                )
+                candidates = np.asarray([
+                    vertex for vertex in candidates
+                    if vertex != source
+                    and (
+                        component is None
+                        or component_by_vertex.get(int(vertex)) == component
+                    )
+                ], dtype=int)
+                used_targets: set[int] = set()
+                for direction in directions:
+                    if not len(candidates):
+                        break
+                    vectors = points[candidates] - region.center
+                    norms = np.linalg.norm(vectors, axis=1)
+                    valid = norms > 1e-12
+                    scores = np.full(len(candidates), np.inf)
+                    scores[valid] = np.asarray([
+                        _departure_angle(direction, vector)
+                        for vector in vectors[valid]
+                    ]) + 0.15 * norms[valid] / max(8.0 * self.local_scale_, 1e-12)
+                    for target_index in np.argsort(scores):
+                        target = int(candidates[target_index])
+                        if target not in used_targets and np.isfinite(scores[target_index]):
+                            break
+                    else:
+                        continue
+                    used_targets.add(target)
+                    edge = routing_graph.key(source, target)
+                    if edge not in routing_graph.edges:
+                        length = float(np.linalg.norm(points[source] - points[target]))
+                        denominator = max(
+                            local_scales[source] * local_scales[target], 1e-12
+                        )
+                        conductance = float(np.exp(-(length * length) / denominator))
+                        routing_graph.add_edge(source, target, length, conductance)
+                        routing_graph.edge_density[edge] = 1.0
 
         self.effective_resistance_ = {}
         self.edge_leverage_ = {}
@@ -712,6 +863,12 @@ class SplineGraphEmbedding:
             for neighbour, branch in allowed_first_edges(source_spec):
                 if required_branch is not None and branch != required_branch:
                     continue
+                if (
+                    component_by_vertex
+                    and component_by_vertex.get(source_vertex)
+                    != component_by_vertex.get(neighbour)
+                ):
+                    continue
                 if routing_graph.key(source_vertex, neighbour) in blocked_edges:
                     continue
                 initial = edge_cost(source_vertex, neighbour)
@@ -756,6 +913,12 @@ class SplineGraphEmbedding:
                 for neighbour in routing_graph.adjacency[node]:
                     if neighbour in path:
                         continue
+                    if (
+                        component_by_vertex
+                        and component_by_vertex.get(node)
+                        != component_by_vertex.get(neighbour)
+                    ):
+                        continue
                     if routing_graph.key(node, neighbour) in blocked_edges:
                         continue
                     candidate_cost = cost + edge_cost(node, neighbour)
@@ -765,6 +928,7 @@ class SplineGraphEmbedding:
             return None
 
         candidates: list[CandidatePath] = []
+        candidate_attempts: list[tuple[int, int, int | None, bool]] = []
         for left in range(len(specifications)):
             for right in range(left + 1, len(specifications)):
                 branch_options: list[int | None] = [None]
@@ -779,10 +943,12 @@ class SplineGraphEmbedding:
                         right,
                         required_branch=required_branch,
                     )
+                    candidate_attempts.append((left, right, required_branch, path is not None))
                     if path is not None:
                         candidates.append(path)
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self.candidate_paths_ = list(candidates)
+        self.candidate_path_attempts_ = candidate_attempts
 
         graph = _LandmarkGraph({index: spec["center"] for index, spec in enumerate(specifications)})
         selected: dict[tuple[int, int], CandidatePath] = {}
@@ -861,7 +1027,19 @@ class SplineGraphEmbedding:
             )
             return alternative
 
-        for candidate in candidates:
+        constrained_first = sorted(
+            candidates,
+            key=lambda candidate: (
+                0 if any(
+                    specifications[node]["kind"] == "junction"
+                    for node in (candidate.start_landmark, candidate.end_landmark)
+                ) else 1,
+                candidate.total_cost,
+                candidate.start_landmark,
+                candidate.end_landmark,
+            ),
+        )
+        for candidate in constrained_first:
             if not valid_degree(candidate):
                 continue
             if union(candidate.start_landmark, candidate.end_landmark):

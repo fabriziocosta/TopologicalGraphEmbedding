@@ -77,7 +77,9 @@ The optional `topological` initializer separates topology, connectivity, and
 geometry. It builds a weighted symmetric kNN graph over standardized
 observations. Edge lengths provide geometric cost; affinity weights provide
 conductances for electrical diagnostics. The graph is a dense routing
-substrate and is not itself returned as the manifold backbone.
+substrate and is not itself returned as the manifold backbone. If it has
+disconnected natural components, a bridge is retained for electrical
+diagnostics only; candidate routes remain within their original component.
 
 All repository notebook workflows explicitly select this initializer. The
 estimator’s Python API retains `backbone_initialization="coarsen"` as its
@@ -157,6 +159,8 @@ After fitting, topology diagnostics are available as:
 | `backbone_graph_` / `backbone_paths_` | Selected abstract graph and point-level route supports |
 | `effective_resistance_` / `edge_leverage_` | Optional edge electrical diagnostics |
 | `electrical_traffic_` | Optional normalized aggregate current support |
+| `routing_components_` / `component_cycle_counts_` | Natural routing components and their persistent cycle counts |
+| `candidate_paths_` | Constrained dense-substrate routes considered by the selector |
 
 Linear structure detection produces an ordered path graph for noisy lines. For
 other geometries, short terminal branches can be pruned and nearby junctions

@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from sklearn.base import clone
+from sklearn.datasets import make_circles
 
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding._electrical import (
@@ -101,3 +102,40 @@ def test_topological_parameter_validation():
         SplineGraphEmbedding(junction_inner_fraction=1.0)
     with pytest.raises(ValueError):
         SplineGraphEmbedding(max_branch_angle_degrees=0.0)
+
+
+def test_topological_junction_routes_are_stable_across_kmeans_seeds():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["x"]
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        random_state=2,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    assert len(model.junctions_) == 1
+    assert model.junctions_[0].branch_count == 4
+    assert model.junction_degree_shortfall_ == {0: 0}
+    assert model.landmark_graph_.degree(model.junctions_[0].node_id) == 4
+    assert all(model.landmark_graph_.degree(node) == 1 for node in model.endpoint_node_ids_)
+
+
+def test_topological_disconnected_cycles_keep_separate_closed_routes():
+    points, _ = make_circles(
+        n_samples=500,
+        factor=0.42,
+        noise=0.045,
+        random_state=1,
+    )
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        max_cycles=4,
+        spline_smoothing=0.1,
+        random_state=11,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    assert model.component_cycle_counts_ == [1, 1]
+    assert model.realized_cycle_count_ == 2
+    assert len(model.route_chains_) == 2
+    assert all(chain["closed"] for chain in model.route_chains_)
+    assert np.all(model.transform(points).route_id >= 0)

@@ -207,6 +207,11 @@ def _weighted_symmetric_knn_graph(X: Array, neighbors: int) -> tuple[_WeightedKN
             graph.add_edge(source, target, distance, conductance)
 
     components = graph.connected_components()
+    # Keep the natural kNN components for topology-aware routing.  A bridge
+    # is still added below so optional electrical diagnostics have a connected
+    # substrate, but it must not become a fabricated spline route between
+    # genuinely separate data components.
+    graph.original_components = [component.copy() for component in components]
     while len(components) > 1:
         left_component = components[0]
         best: tuple[float, int, int] | None = None

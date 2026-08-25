@@ -61,8 +61,9 @@ code when needed.
    features receive unit scale so degenerate inputs remain finite.
 2. **Build the routing substrate.** Topological mode constructs a weighted,
    symmetric observation kNN graph with Euclidean lengths and affinity-based
-   conductances. Coarsening mode instead continues with the existing
-   centroid graph.
+   conductances. Disconnected kNN components receive a bridge only for
+   electrical computations; route selection keeps their backbones separate.
+   Coarsening mode instead continues with the existing centroid graph.
 3. **Estimate topology and local geometry.** Persistent H1 estimates the
    cycle rank. Multiscale annulus components identify junction and endpoint
    regions, while local PCA estimates ordinary tangents and one outgoing
@@ -285,7 +286,10 @@ Useful fitted attributes include:
 - `branch_counts_`, `branch_confidence_`, `local_tangents_`, and
   `junction_branch_directions_`;
 - `effective_resistance_`, `edge_leverage_`, `electrical_traffic_`,
-  `backbone_graph_`, and `backbone_paths_` in topological mode.
+  `backbone_graph_`, and `backbone_paths_` in topological mode;
+- `routing_components_`, `component_cycle_counts_`, and `candidate_paths_`;
+  these make disconnected-component handling and constrained route candidates
+  inspectable.
 
 Fallbacks are recorded in these attributes so a result remains inspectable.
 Unexpected backend failures are warned about; expected optional-dependency
