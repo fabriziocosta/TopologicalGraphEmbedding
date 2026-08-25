@@ -613,6 +613,18 @@ class SplineGraphEmbedding:
         ) else [
             node for node in coarse_graph.nodes if coarse_graph.degree(node) >= 3
         ]
+        if (
+            self.requested_cycle_count_ == 1
+            and not junctions
+            and len(coarse_junction_nodes) != 1
+        ):
+            # A spanning tree of a single noisy loop can have several
+            # degree-three vertices simply because the centroid tree chose a
+            # short chord.  Those are not observed junctions: promoting them
+            # splits one closed component into a loop plus artificial stubs.
+            # Retain the coarse fallback only when it identifies one isolated
+            # branch point, the topology expected for a loop-with-branch.
+            coarse_junction_nodes = []
         if coarse_junction_nodes:
             stabilized: list[JunctionRegion] = []
             for node in coarse_junction_nodes:

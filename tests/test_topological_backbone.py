@@ -238,6 +238,23 @@ def test_topological_single_loop_spline_covers_both_sides_of_cycle():
     assert np.median(model.transform(points).residual_norm) < 0.1
 
 
+def test_topological_dense_single_loop_is_not_split_by_coarse_tree():
+    points = generate_synthetic_datasets(n=1000, noise=0.045, random_state=0)["circle"]
+    model = SplineGraphEmbedding(
+        n_centroids=50,
+        random_state=0,
+        persistence_threshold=4.0,
+        persistence_max_points=60,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    assert model.realized_cycle_count_ == 1
+    assert len(model.junctions_) == 0
+    assert len(model.route_chains_) == 1
+    assert model.route_chains_[0]["closed"]
+    assert np.median(model.transform(points).residual_norm) < 0.1
+
+
 def test_topological_line_spline_is_linear_in_original_metric():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["line"]
     model = SplineGraphEmbedding(
