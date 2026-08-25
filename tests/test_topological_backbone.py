@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pytest
 from sklearn.base import clone
-from sklearn.datasets import make_circles
+from sklearn.datasets import make_circles, make_moons
 
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding._electrical import (
@@ -178,6 +178,47 @@ def test_topological_disconnected_cycles_keep_separate_closed_routes():
     assert all(chain["closed"] for chain in model.route_chains_)
     result = model.transform(points)
     assert np.all(result.route_id >= 0)
+
+
+def test_topological_disconnected_moons_use_complete_arc_endpoints():
+    points, _ = make_moons(n_samples=500, noise=0.07, random_state=0)
+    model = SplineGraphEmbedding(
+        n_centroids=45,
+        persistence_threshold=4.0,
+        spline_smoothing=0.1,
+        max_cycles=4,
+        random_state=10,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    curves = [spline.samples * model.scale_ + model.mean_ for spline in model.routes_]
+    assert len(curves) == 2
+    assert all(np.ptp(curve[:, 0]) > 1.7 for curve in curves)
+    assert all(abs(curve[0, 1] - curve[-1, 1]) < 0.25 for curve in curves)
+
+
+def test_topological_disconnected_cycles_keep_full_loop_spans():
+    points, _ = make_circles(
+        n_samples=500,
+        factor=0.42,
+        noise=0.045,
+        random_state=1,
+    )
+    model = SplineGraphEmbedding(
+        n_centroids=45,
+        max_cycles=4,
+        persistence_threshold=4.0,
+        spline_smoothing=0.1,
+        random_state=11,
+        backbone_initialization="topological",
+    ).fit(points)
+    result = model.transform(points)
+
+    for route, spline in enumerate(model.routes_):
+        curve = spline.samples * model.scale_ + model.mean_
+        members = points[result.route_id == route]
+        assert spline.closed
+        assert np.all(np.ptp(curve, axis=0) >= 0.8 * np.ptp(members, axis=0))
 
 
 def test_topological_single_loop_spline_covers_both_sides_of_cycle():

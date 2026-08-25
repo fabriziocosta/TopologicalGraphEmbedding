@@ -213,6 +213,10 @@ def _fit_curve(
 
     tck = None
     backend = "numpy"
+    # A large smoothing factor can pull a periodic spline sharply toward its
+    # centroid, changing the loop's topology-preserving geometry.  Closed
+    # routes need only modest denoising; cap the value before FITPACK sees it.
+    fit_smoothing = min(float(smoothing), 0.01) if closed else float(smoothing)
     # FITPACK's parametric spline implementation supports at most ten
     # coordinate dimensions.  High-dimensional embeddings intentionally use
     # the deterministic NumPy fallback without producing one warning per
@@ -220,7 +224,7 @@ def _fit_curve(
     scipy_supported_dimension = points.shape[1] < 11
     if splprep is not None and len(points) >= 3 and scipy_supported_dimension:
         degree = min(3, len(points) - 1)
-        smoothing_factor = max(0.0, float(smoothing)) * len(points)
+        smoothing_factor = max(0.0, fit_smoothing) * len(points)
         for _ in range(8):
             try:
                 # FITPACK can report that a small requested smoothing value is
