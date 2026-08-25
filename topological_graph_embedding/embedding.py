@@ -413,7 +413,9 @@ class SplineGraphEmbedding:
         if (
             self.detect_junctions
             and not self.linear_structure_
-            and self.requested_cycle_count_ >= 2
+            and self.requested_cycle_count_ == 2
+            and points.shape[1] == 2
+            and len(routing_components) == 1
             and len(points)
         ):
             # Multi-cycle figure-eight-like samples often produce an unstable
@@ -458,6 +460,14 @@ class SplineGraphEmbedding:
                     for junction in junctions
                 )
             ]
+            if self.requested_cycle_count_ > 0 and len(junctions) >= 2:
+                # A closed graph with several junction regions has no valid
+                # degree-one terminals in the synthetic/topological model.
+                # Centroid MST leaves in this case are usually short pieces
+                # of a loop or a high-dimensional edge, not observed
+                # endpoints.  Keeping them forces the landmark selector to
+                # trade cycles for artificial terminal branches.
+                endpoints = []
         # Use the coarse tree only to stabilize singular-region candidates.
         # The final routes still come exclusively from the dense weighted kNN
         # substrate below, so this does not reinstate coarsening as the
@@ -568,7 +578,10 @@ class SplineGraphEmbedding:
                 )
             ]
         if junctions and not self.linear_structure_:
-            desired_endpoints = max(
+            closed_multi_junction = (
+                self.requested_cycle_count_ > 0 and len(junctions) >= 2
+            )
+            desired_endpoints = 0 if closed_multi_junction else max(
                 0,
                 2
                 + sum(max(0, region.branch_count - 2) for region in junctions)
@@ -1086,9 +1099,23 @@ class SplineGraphEmbedding:
                 continue
             if needs_arm:
                 # Incidence completion is allowed to share a dense-substrate
-                # segment near a landmark.  Edge-disjoint rerouting is only
-                # required for the extra edge that intentionally creates a
-                # cycle.
+                # segment near a landmark.  An anchor-completion edge that
+                # closes a component is different: it intentionally creates
+                # a cycle and must be rerouted before it is committed.  If
+                # this is postponed until the cycle pass below, the anchor
+                # degree constraint has already consumed the overlapping
+                # candidate and closed loops can fold back over themselves.
+                if (
+                    self.detect_cycles
+                    and self.requested_cycle_count_ > 0
+                    and find(candidate.start_landmark) == find(candidate.end_landmark)
+                ):
+                    alternative = reroute_cycle_candidate(candidate)
+                    if alternative is not None:
+                        candidate = alternative
+                        key = graph._key(candidate.start_landmark, candidate.end_landmark)
+                    if not valid_degree(candidate, allow_anchor_overflow=needs_arm):
+                        continue
                 selected[key] = candidate
                 degree[candidate.start_landmark] += 1
                 degree[candidate.end_landmark] += 1
@@ -1115,6 +1142,21 @@ class SplineGraphEmbedding:
             ):
                 continue
             if needs_arm:
+                if (
+                    self.detect_cycles
+                    and self.requested_cycle_count_ > 0
+                    and find(candidate.start_landmark) == find(candidate.end_landmark)
+                ):
+                    alternative = reroute_cycle_candidate(candidate)
+                    if alternative is not None:
+                        candidate = alternative
+                        key = graph._key(candidate.start_landmark, candidate.end_landmark)
+                    if not valid_degree(
+                        candidate,
+                        enforce_branch_slots=False,
+                        allow_anchor_overflow=needs_arm,
+                    ):
+                        continue
                 selected[key] = candidate
                 degree[candidate.start_landmark] += 1
                 degree[candidate.end_landmark] += 1
@@ -1192,6 +1234,28 @@ class SplineGraphEmbedding:
                     break
             if not removed:
                 break
+
+        # A dense cycle target and coarse junction degrees can be mutually
+        # incompatible.  For example, a sampled hypercube may expose several
+        # high-degree centroid junctions while the requested cycle budget is
+        # deliberately capped.  In that case the degree-preserving pass
+        # above cannot remove the last redundant cycle.  Prefer the explicit
+        # cycle-rank target and relax the least-supported junction incidences;
+        # the resulting degree shortfall remains available in diagnostics.
+        while selected_cycle_rank(selected) > self.requested_cycle_count_:
+            removable: list[tuple[float, tuple[int, int], CandidatePath]] = []
+            for key, candidate in selected.items():
+                trial = selected.copy()
+                del trial[key]
+                if selected_cycle_rank(trial) < selected_cycle_rank(selected):
+                    removable.append((candidate.total_cost, key, candidate))
+            if not removable:
+                break
+            _, key, candidate = max(removable, key=lambda item: item[0])
+            del selected[key]
+            degree[key[0]] -= 1
+            degree[key[1]] -= 1
+            unmark_branches(candidate)
 
         if self.linear_structure_ and selected:
             # The dense kNN shortest path is allowed to zig-zag across a

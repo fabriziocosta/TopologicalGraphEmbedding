@@ -173,4 +173,22 @@ def test_topological_disconnected_cycles_keep_separate_closed_routes():
     assert model.realized_cycle_count_ == 2
     assert len(model.route_chains_) == 2
     assert all(chain["closed"] for chain in model.route_chains_)
-    assert np.all(model.transform(points).route_id >= 0)
+    result = model.transform(points)
+    assert np.all(result.route_id >= 0)
+
+
+def test_topological_single_loop_spline_covers_both_sides_of_cycle():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["circle"]
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        random_state=3,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    samples = model.routes_[0].samples
+    assert model.routes_[0].closed
+    assert samples[:, 0].min() < -0.7
+    assert samples[:, 0].max() > 0.7
+    assert samples[:, 1].min() < -0.7
+    assert samples[:, 1].max() > 0.7
+    assert np.median(model.transform(points).residual_norm) < 0.1
