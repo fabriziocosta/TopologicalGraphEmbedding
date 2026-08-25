@@ -4,12 +4,113 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Any
 
 import numpy as np
 
 Array = np.ndarray
+
+
+@dataclass
+class JunctionRegion:
+    """Spatially clustered local-topology evidence for one junction."""
+
+    center: Array
+    branch_count: int
+    confidence: float
+    member_indices: list[int] = field(default_factory=list)
+    arm_indices: list[np.ndarray] = field(default_factory=list)
+    node_id: int | None = None
+
+
+@dataclass
+class EndpointRegion:
+    """Spatially clustered local-topology evidence for one endpoint."""
+
+    center: Array
+    confidence: float
+    member_indices: list[int] = field(default_factory=list)
+    node_id: int | None = None
+
+
+@dataclass
+class TopologyEstimate:
+    """Diagnostics produced by the topology initialization stage."""
+
+    cycle_count: int
+    persistence_diagram: Array
+    normalized_persistence_diagram: Array
+    junction_regions: list[JunctionRegion]
+    endpoint_regions: list[EndpointRegion]
+    branch_counts: Array
+    topology_confidence: Array
+
+
+@dataclass
+class CandidatePath:
+    """A route through the dense graph between two logical landmarks."""
+
+    start_landmark: int
+    end_landmark: int
+    vertices: list[int]
+    total_cost: float
+    length: float
+    tangent_cost: float
+    electrical_support: float = 0.0
+    current_support: float = 0.0
+    branch_start: int | None = None
+    branch_end: int | None = None
+
+
+class _WeightedKNNGraph:
+    """Weighted symmetrized kNN graph used as a routing substrate."""
+
+    def __init__(self, points: Array) -> None:
+        self.points = np.asarray(points, dtype=float)
+        self.edges: dict[tuple[int, int], float] = {}
+        self.conductances: dict[tuple[int, int], float] = {}
+        self.adjacency: dict[int, list[int]] = {index: [] for index in range(len(points))}
+        self.edge_density: dict[tuple[int, int], float] = {}
+
+    @staticmethod
+    def key(left: int, right: int) -> tuple[int, int]:
+        return (left, right) if left < right else (right, left)
+
+    def add_edge(self, left: int, right: int, length: float, conductance: float) -> None:
+        if left == right:
+            return
+        edge = self.key(int(left), int(right))
+        if edge in self.edges:
+            # Keep the strongest local connection if a symmetrized neighbour
+            # query contributes the same edge twice.
+            if conductance <= self.conductances[edge]:
+                return
+            self.adjacency[edge[0]].remove(edge[1])
+            self.adjacency[edge[1]].remove(edge[0])
+        self.edges[edge] = float(length)
+        self.conductances[edge] = max(float(conductance), 1e-12)
+        self.adjacency[edge[0]].append(edge[1])
+        self.adjacency[edge[1]].append(edge[0])
+
+    def connected_components(self) -> list[list[int]]:
+        remaining = set(self.adjacency)
+        components: list[list[int]] = []
+        while remaining:
+            root = min(remaining)
+            remaining.remove(root)
+            stack = [root]
+            component = [root]
+            while stack:
+                node = stack.pop()
+                for neighbour in self.adjacency[node]:
+                    if neighbour in remaining:
+                        remaining.remove(neighbour)
+                        stack.append(neighbour)
+                        component.append(neighbour)
+            components.append(component)
+        return components
 
 
 def _as_point_cloud(X: Array | Sequence[Sequence[float]]) -> Array:
@@ -66,6 +167,216 @@ def _standardize(X: Array) -> tuple[Array, Array, Array]:
     scale = np.std(X, axis=0)
     scale[scale < 1e-12] = 1.0
     return (X - mean) / scale, mean, scale
+
+
+def _weighted_symmetric_knn_graph(X: Array, neighbors: int) -> tuple[_WeightedKNNGraph, Array]:
+    """Build a weighted symmetric kNN graph over the observations.
+
+    Euclidean lengths are retained for geometry while Gaussian affinities are
+    retained as conductances.  A minimum-distance bridge is added between
+    disconnected kNN components so shortest paths and electrical quantities
+    have a well-defined connected substrate.
+    """
+    points = np.asarray(X, dtype=float)
+    graph = _WeightedKNNGraph(points)
+    if len(points) < 2:
+        graph.local_scales = np.ones(len(points), dtype=float)
+        return graph, graph.local_scales
+    count = min(max(1, int(neighbors)), len(points) - 1)
+    try:
+        from scipy.spatial import cKDTree
+
+        distances, indices = cKDTree(points).query(points, k=count + 1)
+        distances = np.asarray(distances, dtype=float)
+        indices = np.asarray(indices, dtype=int)
+        local_scales = np.maximum(distances[:, -1], 1e-8)
+    except Exception:  # pragma: no cover - SciPy is a core dependency in normal use.
+        distances_all = _pairwise_distances(points)
+        order = np.argsort(distances_all, axis=1, kind="mergesort")[:, 1:count + 1]
+        distances = np.take_along_axis(distances_all, order, axis=1)
+        indices = np.column_stack([np.arange(len(points)), order])
+        distances = np.column_stack([np.zeros(len(points)), distances])
+        local_scales = np.maximum(distances[:, -1], 1e-8)
+
+    for source in range(len(points)):
+        for column in range(1, count + 1):
+            target = int(indices[source, column])
+            distance = float(distances[source, column])
+            denominator = max(local_scales[source] * local_scales[target], 1e-12)
+            conductance = float(np.exp(-(distance * distance) / denominator))
+            graph.add_edge(source, target, distance, conductance)
+
+    components = graph.connected_components()
+    while len(components) > 1:
+        left_component = components[0]
+        best: tuple[float, int, int] | None = None
+        for left in left_component:
+            for component in components[1:]:
+                for right in component:
+                    distance = float(np.linalg.norm(points[left] - points[right]))
+                    candidate = (distance, left, right)
+                    if best is None or candidate < best:
+                        best = candidate
+        if best is None:
+            break
+        distance, left, right = best
+        denominator = max(local_scales[left] * local_scales[right], 1e-12)
+        graph.add_edge(left, right, distance, float(np.exp(-(distance * distance) / denominator)))
+        components = graph.connected_components()
+
+    positive_scales = local_scales[local_scales > 1e-12]
+    reference = float(np.median(positive_scales)) if len(positive_scales) else 1.0
+    for edge, conductance in graph.conductances.items():
+        graph.edge_density[edge] = float(np.clip(conductance / max(reference, 1e-12), 0.0, 1.0))
+    graph.local_scales = local_scales
+    return graph, local_scales
+
+
+def _induced_annulus_components(
+    graph: _WeightedKNNGraph,
+    center: Array,
+    radius: float,
+    inner_radius_fraction: float,
+) -> list[np.ndarray]:
+    """Return connected components in a graph-induced annulus."""
+    distances = np.linalg.norm(graph.points - np.asarray(center), axis=1)
+    selected = np.flatnonzero(
+        (distances <= max(radius, 1e-8))
+        & (distances >= inner_radius_fraction * max(radius, 1e-8))
+    )
+    if len(selected) == 0:
+        return []
+    selected_set = set(int(index) for index in selected)
+    remaining = set(selected_set)
+    components: list[np.ndarray] = []
+    while remaining:
+        root = min(remaining)
+        remaining.remove(root)
+        stack = [root]
+        component = [root]
+        while stack:
+            node = stack.pop()
+            for neighbour in graph.adjacency[node]:
+                if neighbour in remaining and neighbour in selected_set:
+                    remaining.remove(neighbour)
+                    stack.append(neighbour)
+                    component.append(neighbour)
+        components.append(np.asarray(sorted(component), dtype=int))
+    return components
+
+
+def _cluster_region_candidates(
+    points: Array,
+    candidates: list[tuple[int, int, float, list[np.ndarray]]],
+    merge_distance: float,
+    junction: bool,
+) -> list[JunctionRegion | EndpointRegion]:
+    """Cluster nearby stable local-topology candidates into regions."""
+    if not candidates:
+        return []
+    remaining = set(range(len(candidates)))
+    regions: list[JunctionRegion | EndpointRegion] = []
+    while remaining:
+        root = min(remaining)
+        remaining.remove(root)
+        group = [root]
+        changed = True
+        while changed:
+            changed = False
+            for index in list(remaining):
+                if any(
+                    np.linalg.norm(points[candidates[index][0]] - points[candidates[member][0]])
+                    <= merge_distance
+                    for member in group
+                ):
+                    remaining.remove(index)
+                    group.append(index)
+                    changed = True
+        weights = np.asarray([max(candidates[index][2], 1e-8) for index in group])
+        centers = np.asarray([points[candidates[index][0]] for index in group])
+        center = np.average(centers, axis=0, weights=weights)
+        members = [candidates[index][0] for index in group]
+        confidence = float(np.average(weights, weights=weights))
+        if junction:
+            counts = [candidates[index][1] for index in group]
+            branch_count = int(round(float(np.median(counts))))
+            arm_indices = max(
+                (candidates[index][3] for index in group),
+                key=lambda arms: (len(arms), -abs(len(arms) - branch_count)),
+            )
+            regions.append(JunctionRegion(center, branch_count, confidence, members, arm_indices))
+        else:
+            regions.append(EndpointRegion(center, confidence, members))
+    return regions
+
+
+def _estimate_local_topology(
+    X: Array,
+    graph: _WeightedKNNGraph,
+    candidate_centers: Array,
+    *,
+    local_scales: Sequence[float] | None = None,
+    inner_radius_fraction: float = 0.25,
+    min_junction_confidence: float = 0.7,
+    scales: int | Sequence[float] = 6,
+    merge_distance: float | None = None,
+) -> tuple[list[JunctionRegion], list[EndpointRegion], Array, Array]:
+    """Estimate stable branch counts around prototype candidates."""
+    if isinstance(scales, int):
+        scale_count = max(2, int(scales))
+        scale_multipliers = np.linspace(0.85, 2.2, scale_count)
+    else:
+        scale_multipliers = np.asarray(list(scales), dtype=float)
+        scale_multipliers = scale_multipliers[np.isfinite(scale_multipliers) & (scale_multipliers > 0)]
+        if len(scale_multipliers) < 2:
+            scale_multipliers = np.linspace(0.85, 2.2, 6)
+    if local_scales is None:
+        local_scales = graph.local_scales
+    local_scales = np.asarray(local_scales, dtype=float)
+    global_scale = _local_scale(X)
+    candidate_indices = np.asarray([
+        int(np.argmin(np.sum((X - center) ** 2, axis=1))) for center in candidate_centers
+    ])
+    merge_distance = float(merge_distance) if merge_distance is not None else 2.5 * global_scale
+    junction_candidates: list[tuple[int, int, float, list[np.ndarray]]] = []
+    endpoint_candidates: list[tuple[int, int, float, list[np.ndarray]]] = []
+    branch_counts = np.zeros(len(candidate_indices), dtype=int)
+    confidences = np.zeros(len(candidate_indices), dtype=float)
+    for row, point_index in enumerate(candidate_indices):
+        base_radius = max(float(local_scales[point_index]), global_scale)
+        component_sets = [
+            _induced_annulus_components(
+                graph,
+                X[point_index],
+                base_radius * float(multiplier),
+                inner_radius_fraction,
+            )
+            for multiplier in scale_multipliers
+        ]
+        counts = np.asarray([len(components) for components in component_sets], dtype=int)
+        counts[counts == 0] = 1
+        values, frequencies = np.unique(counts, return_counts=True)
+        mode_index = int(np.argmax(frequencies))
+        branch_count = int(values[mode_index])
+        confidence = float(frequencies[mode_index] / len(counts))
+        branch_counts[row] = branch_count
+        confidences[row] = confidence
+        stable_arms = component_sets[mode_index]
+        entry = (int(point_index), branch_count, confidence, stable_arms)
+        if confidence < min_junction_confidence:
+            continue
+        if branch_count >= 3:
+            junction_candidates.append(entry)
+        elif branch_count == 1:
+            endpoint_candidates.append(entry)
+    junctions = _cluster_region_candidates(X, junction_candidates, merge_distance, True)
+    endpoints = _cluster_region_candidates(X, endpoint_candidates, merge_distance, False)
+    return (
+        [region for region in junctions if isinstance(region, JunctionRegion)],
+        [region for region in endpoints if isinstance(region, EndpointRegion)],
+        branch_counts,
+        confidences,
+    )
 
 
 class _LandmarkGraph:
