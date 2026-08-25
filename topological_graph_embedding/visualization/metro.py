@@ -35,6 +35,7 @@ class MetroLayout:
         junction_radius: float = 0.72,
         junction_radius_per_branch: float = 0.10,
         junction_port_spacing: float = 0.42,
+        diagonal_angle_padding: float = float(np.deg2rad(12.0)),
         # Keep the fixed-size junction offset visually subordinate to the
         # routes.  This scales schematic distances, not lane spacing or discs.
         layout_scale: float = 2.0,
@@ -53,6 +54,7 @@ class MetroLayout:
         self.junction_radius = float(junction_radius)
         self.junction_radius_per_branch = float(junction_radius_per_branch)
         self.junction_port_spacing = float(junction_port_spacing)
+        self.diagonal_angle_padding = float(diagonal_angle_padding)
         self.layout_scale = float(layout_scale)
         self.residual_frame = str(residual_frame).lower()
         self.local_pca_bins = max(1, int(local_pca_bins))
@@ -63,6 +65,14 @@ class MetroLayout:
             raise ValueError("junction_radius_per_branch must be non-negative")
         if self.junction_port_spacing < 0.0:
             raise ValueError("junction_port_spacing must be non-negative")
+        if (
+            self.diagonal_angle_padding < 0.0
+            or not np.isfinite(self.diagonal_angle_padding)
+            or self.diagonal_angle_padding >= np.pi / 8.0
+        ):
+            raise ValueError(
+                "diagonal_angle_padding must be finite, non-negative, and less than pi/8"
+            )
         if self.layout_scale <= 0.0:
             raise ValueError("layout_scale must be positive")
         if self.residual_width < 0.0 or not np.isfinite(self.residual_width):
@@ -638,6 +648,15 @@ class MetroLayout:
         assigned[cyclic_order] = np.mod(base, 2.0 * np.pi)
         return assigned
 
+    def _pad_diagonal_angle(self, angle: float, direction_bin: int) -> float:
+        """Pull diagonal lane ports inward from neighboring cardinal fans."""
+        if self.diagonal_angle_padding <= 0.0 or int(direction_bin) % 2 == 0:
+            return float(angle % (2.0 * np.pi))
+        diagonal_angle = int(direction_bin) % 8 * np.pi / 4.0
+        delta = self._wrap_angle(angle - diagonal_angle)
+        magnitude = max(abs(delta) - self.diagonal_angle_padding, 0.0)
+        return float((diagonal_angle + np.sign(delta) * magnitude) % (2.0 * np.pi))
+
     def _configure_junction_discs(self) -> None:
         """Allocate adaptive station discs and source-aware lane ports."""
         incidences = self._junction_incidences()
@@ -669,6 +688,8 @@ class MetroLayout:
             )
             self.junction_radii_[node] = radius
             center = np.asarray(self.station_positions_[node], dtype=float)
+            ideal_angles: list[float] = []
+            direction_bins: list[int] = []
             for route, side in members:
                 path = np.asarray(self.route_paths_[route], dtype=float)
                 oriented = path if side == 0 else path[::-1]
@@ -680,7 +701,21 @@ class MetroLayout:
                 normal = np.asarray([-direction[1], direction[0]])
                 lateral_offset = float((oriented[0] - center) @ normal)
                 along = np.sqrt(max(radius * radius - lateral_offset * lateral_offset, 0.0))
-                port = center + lateral_offset * normal + along * direction
+                ideal_port = center + lateral_offset * normal + along * direction
+                ideal_angles.append(float(np.arctan2(
+                    ideal_port[1] - center[1], ideal_port[0] - center[0],
+                )))
+                direction_bins.append(int(direction_bin) % 8)
+
+            padded_angles = np.asarray([
+                self._pad_diagonal_angle(angle, direction_bin)
+                for angle, direction_bin in zip(ideal_angles, direction_bins)
+            ])
+            allocated_angles = self._allocate_port_angles(padded_angles, radius)
+            for (route, side), angle in zip(members, allocated_angles):
+                port = center + radius * np.asarray([
+                    np.cos(angle), np.sin(angle),
+                ])
                 self.junction_ports_[node, route, side] = port
                 self.route_junction_ports_[route, side] = (node, port)
 
@@ -752,11 +787,11 @@ class MetroLayout:
             # This is only a defensive fallback for a degenerate route.  The
             # endpoint-clearance pass normally guarantees an outward crossing.
             crossing_index = 0
-        # The first stub is constructed from the same canonical direction and
-        # lateral offset used to calculate ``port``.  Numerical differences in
-        # the line-circle intersection are therefore negligible; use the
-        # supplied port so the public port and clipped path agree exactly.
-        if crossing_index == 0 and np.linalg.norm(crossing - port) <= 1e-6:
+        # The first stub is deliberately allowed to leave through the padded
+        # port rather than reverting to the unpadded line-circle intersection.
+        # The padding is small, so the following canonical segment remains
+        # outward from the disc while its visual start is cleanly separated.
+        if crossing_index == 0:
             crossing = np.asarray(port, dtype=float)
         clipped = np.asarray([crossing, *oriented[crossing_index + 1 :]], dtype=float)
         cleaned = [clipped[0]]
@@ -771,7 +806,7 @@ class MetroLayout:
         clipped_paths = [np.asarray(path, dtype=float).copy() for path in paths]
         for (route, side), (node, port) in self.route_junction_ports_.items():
             clipped_paths[route] = self._clip_route_endpoint(
-                clipped_paths[route], node, port, side
+                clipped_paths[route], node, port, side,
             )
         return clipped_paths
 
@@ -1448,6 +1483,41 @@ class MetroLayout:
         tangent = vectors[indices] / lengths[indices, None]
         return positions, tangent
 
+    def _clear_junction_disc_interiors(self, points: np.ndarray) -> np.ndarray:
+        """Keep displayed observations outside the empty junction discs."""
+        points = np.asarray(points, dtype=float).copy()
+        if not getattr(self, "junction_radii_", None):
+            return points
+
+        clearance = 0.04
+        for node, radius in self.junction_radii_.items():
+            center = np.asarray(self.station_positions_[node], dtype=float)
+            displacement = points - center
+            distance = np.linalg.norm(displacement, axis=1)
+            inside = distance < radius + clearance
+            if not np.any(inside):
+                continue
+            directions = displacement[inside]
+            norms = np.linalg.norm(directions, axis=1)
+            zero = norms <= 1e-12
+            if np.any(zero):
+                directions[zero] = np.asarray([1.0, 0.0])
+                norms[zero] = 1.0
+            points[inside] = center + (radius + clearance) * directions / norms[:, None]
+        return points
+
+    def _mask_junction_disc_interiors(self, points: np.ndarray) -> np.ndarray:
+        """Break rendered route polylines wherever they enter a junction disc."""
+        points = np.asarray(points, dtype=float).copy()
+        if not getattr(self, "junction_radii_", None):
+            return points
+        inside = np.zeros(len(points), dtype=bool)
+        for node, radius in self.junction_radii_.items():
+            center = np.asarray(self.station_positions_[node], dtype=float)
+            inside |= np.linalg.norm(points - center, axis=1) < radius
+        points[inside] = np.nan
+        return points
+
     def transform_splines(self) -> list[np.ndarray]:
         """Return 2D schematic samples corresponding to every fitted spline."""
         if not getattr(self, "_fitted", False):
@@ -1456,7 +1526,7 @@ class MetroLayout:
         for path, spline in zip(self.route_paths_, self.model.routes_):
             values = np.linspace(0.0, 1.0, len(spline.samples), endpoint=not spline.closed)
             points, _ = self._polyline_position_and_tangent(path, values, spline.closed)
-            result.append(points)
+            result.append(self._mask_junction_disc_interiors(points))
         return result
 
     def transform_points(self, result: EmbeddingResult) -> np.ndarray:
@@ -1466,6 +1536,7 @@ class MetroLayout:
         coordinate comes from a symmetric-log transform of the signed local
         residual PCA score.  This keeps the map readable for high-dimensional
         data without folding all residual directions onto two clipped lines.
+        Junction discs are treated as empty display regions.
         """
         if not getattr(self, "_fitted", False):
             raise RuntimeError("Call fit before transform_points")
@@ -1493,7 +1564,7 @@ class MetroLayout:
                 signed_component = side * residual[members]
             offset = self._log_scaled_residual_scores(route, signed_component)
             points[members] = positions + offset[:, None] * normal
-        return points
+        return self._clear_junction_disc_interiors(points)
 
     def transform_points_3d(self, result: EmbeddingResult) -> np.ndarray:
         """Map observations to a 3D metro view with a local residual plane.
@@ -1535,6 +1606,7 @@ class MetroLayout:
             points[members, :2] = positions + displayed_scores[:, 0, None] * normal
             if axes.shape[1] > 1:
                 points[members, 2] = displayed_scores[:, 1]
+        points[:, :2] = self._clear_junction_disc_interiors(points[:, :2])
         return points
 
     def node_positions(self) -> dict[int, np.ndarray]:

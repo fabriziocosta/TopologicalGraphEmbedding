@@ -16,8 +16,12 @@ def test_metro_layout_consumes_embedding_result():
     model = SplineGraphEmbedding(n_centroids=12, random_state=0).fit(points)
     result = model.transform(points)
     layout = MetroLayout(model, random_state=0).fit(result)
-    assert layout.transform_points(result).shape == (len(points), 2)
+    displayed = layout.transform_points(result)
+    assert displayed.shape == (len(points), 2)
     assert layout.transform_points_3d(result).shape == (len(points), 3)
+    for node, radius in layout.junction_radii_.items():
+        center = layout.station_positions_[node]
+        assert np.all(np.linalg.norm(displayed - center, axis=1) >= radius)
 
 
 def test_plot_network_uses_public_name():

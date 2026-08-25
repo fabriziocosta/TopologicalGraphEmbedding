@@ -149,7 +149,9 @@ def run_demo(
         max_cycles=max_cycles,
     )
 
-    figure, axes = plt.subplots(len(datasets), 4, figsize=(30, 4 * len(datasets)))
+    figure, axes = plt.subplots(
+        len(datasets), 4, figsize=(26, 4 * len(datasets)), squeeze=False,
+    )
     for row, (name, (points, labels)) in enumerate(datasets.items()):
         reducer_model = fit_reducer(
             points,
