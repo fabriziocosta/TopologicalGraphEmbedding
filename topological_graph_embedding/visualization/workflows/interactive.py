@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from html import escape
 from io import BytesIO
 from typing import Any
@@ -186,6 +187,7 @@ def display_interactive_viewer(
         threshold = None if threshold_mode.value == "auto" else threshold_slider.value
         merge_distance = None if merge_slider.value == 0 else merge_slider.value
         model = SplineGraphEmbedding(
+            backbone_initialization="topological",
             n_centroids=centroid_slider.value,
             persistence_threshold=threshold,
             spline_smoothing=smoothing_slider.value,
@@ -193,7 +195,13 @@ def display_interactive_viewer(
             random_state=random_state,
             merge_junction_distance=merge_distance,
         )
-        result = model.fit_transform(points)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Topological landmark constraints could not all be realized by the routing substrate\\.",
+                category=RuntimeWarning,
+            )
+            result = model.fit_transform(points)
         model.route_metrics_ = evaluate_route_target(
             model, result, labels, n_splits=10, random_state=random_state,
         )

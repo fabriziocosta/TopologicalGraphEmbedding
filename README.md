@@ -51,6 +51,12 @@ initializer. With `backbone_initialization="topological"`, the dense weighted
 observation kNN graph is treated as a routing substrate and the backbone is
 selected from explicit topology and connectivity constraints:
 
+The repository’s notebook workflows explicitly select
+`backbone_initialization="topological"` so their figures and summaries use the
+topology-aware initializer. The library default remains `"coarsen"` for
+backward compatibility; select the notebook behavior directly in application
+code when needed.
+
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.
 2. **Build the routing substrate.** Topological mode constructs a weighted,
@@ -103,6 +109,7 @@ X = datasets["loop-branch"]
 
 model = SplineGraphEmbedding(
     n_centroids=32,
+    backbone_initialization="topological",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,

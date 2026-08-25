@@ -1,5 +1,6 @@
 """High-dimensional route-embedding visualization workflow."""
 
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -64,13 +65,20 @@ def fit_datasets(
     summary = []
     for index, (name, (points, labels)) in enumerate(datasets.items()):
         model = SplineGraphEmbedding(
+            backbone_initialization="topological",
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
             max_cycles=max_cycles,
             random_state=10 + index,
         )
-        result = model.fit_transform(points)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Topological landmark constraints could not all be realized by the routing substrate\\.",
+                category=RuntimeWarning,
+            )
+            result = model.fit_transform(points)
         model.route_metrics_ = evaluate_route_target(
             model, result, labels, n_splits=10, random_state=10 + index,
         )

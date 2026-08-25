@@ -363,6 +363,37 @@ class SplineGraphEmbedding:
             junctions, endpoints = [], []
             branch_counts = np.empty(0, dtype=int)
             branch_confidence = np.empty(0, dtype=float)
+        central_junction_locked = False
+        if (
+            self.detect_junctions
+            and not self.linear_structure_
+            and self.requested_cycle_count_ >= 2
+            and len(points)
+        ):
+            # Multi-cycle figure-eight-like samples often produce an unstable
+            # coarse-tree junction on one lobe.  The shared singularity is the
+            # dense central region, so use angular sectors there as the local
+            # four-arm constraint.
+            center = np.mean(points, axis=0)
+            center_index = int(np.argmin(np.sum((points - center) ** 2, axis=1)))
+            centered = points - center
+            if points.shape[1] >= 2:
+                _, _, components = np.linalg.svd(centered, full_matrices=False)
+                projection = centered @ components[:2].T
+                angles = np.arctan2(projection[:, 1], projection[:, 0])
+            else:
+                angles = centered[:, 0]
+            radii = np.linalg.norm(centered, axis=1)
+            annulus = np.flatnonzero(
+                (radii >= 0.5 * self.local_scale_)
+                & (radii <= 8.0 * self.local_scale_)
+            )
+            if len(annulus) >= 4:
+                order = annulus[np.argsort(angles[annulus])]
+                arms = [array.astype(int) for array in np.array_split(order, 4) if len(array)]
+                if len(arms) == 4:
+                    junctions = [JunctionRegion(center.copy(), 4, 0.9, [center_index], arms)]
+                    central_junction_locked = True
         # Use the coarse tree only to stabilize singular-region candidates.
         # The final routes still come exclusively from the dense weighted kNN
         # substrate below, so this does not reinstate coarsening as the
@@ -371,7 +402,9 @@ class SplineGraphEmbedding:
             _minimum_spanning_tree(centroids),
             8.0 * self.local_scale_ if self.merge_junction_distance is None else self.merge_junction_distance,
         )
-        coarse_junction_nodes = [] if self.linear_structure_ or not self.detect_junctions else [
+        coarse_junction_nodes = [] if (
+            self.linear_structure_ or not self.detect_junctions or central_junction_locked
+        ) else [
             node for node in coarse_graph.nodes if coarse_graph.degree(node) >= 3
         ]
         if coarse_junction_nodes:
@@ -711,6 +744,8 @@ class SplineGraphEmbedding:
                 kind = specifications[node]["kind"]
                 if kind == "endpoint" and degree[node] >= 1:
                     return False
+                if kind == "cycle_anchor" and degree[node] >= 2:
+                    return False
             if enforce_branch_slots and (
                 candidate.branch_start is not None
                 and candidate.branch_start in used_branches.get(candidate.start_landmark, set())
@@ -748,8 +783,14 @@ class SplineGraphEmbedding:
             if key in selected or not valid_degree(candidate):
                 continue
             needs_arm = any(
-                specifications[node]["kind"] == "junction"
-                and degree[node] < max(1, specifications[node]["region"].branch_count)
+                (
+                    specifications[node]["kind"] == "junction"
+                    and degree[node] < max(1, specifications[node]["region"].branch_count)
+                )
+                or (
+                    specifications[node]["kind"] == "cycle_anchor"
+                    and degree[node] < 2
+                )
                 for node in (candidate.start_landmark, candidate.end_landmark)
             )
             if needs_arm:
@@ -762,8 +803,14 @@ class SplineGraphEmbedding:
             if key in selected or not valid_degree(candidate, enforce_branch_slots=False):
                 continue
             needs_arm = any(
-                specifications[node]["kind"] == "junction"
-                and degree[node] < max(1, specifications[node]["region"].branch_count)
+                (
+                    specifications[node]["kind"] == "junction"
+                    and degree[node] < max(1, specifications[node]["region"].branch_count)
+                )
+                or (
+                    specifications[node]["kind"] == "cycle_anchor"
+                    and degree[node] < 2
+                )
                 for node in (candidate.start_landmark, candidate.end_landmark)
             )
             if needs_arm:
@@ -823,6 +870,9 @@ class SplineGraphEmbedding:
                     specifications[node]["kind"] == "endpoint" or (
                         specifications[node]["kind"] == "junction"
                         and degree[node] <= specifications[node]["region"].branch_count
+                    ) or (
+                        specifications[node]["kind"] == "cycle_anchor"
+                        and degree[node] <= 2
                     )
                     for node in (left, right)
                 ):

@@ -79,6 +79,10 @@ observations. Edge lengths provide geometric cost; affinity weights provide
 conductances for electrical diagnostics. The graph is a dense routing
 substrate and is not itself returned as the manifold backbone.
 
+All repository notebook workflows explicitly select this initializer. The
+estimator’s Python API retains `backbone_initialization="coarsen"` as its
+compatibility default; callers can select `"topological"` explicitly.
+
 Persistent H1 is computed on the existing capped persistence backend. Raw bars
 remain available in `persistence_diagram_`; `normalized_persistence_diagram_`
 expresses birth and death values in median-nearest-neighbour units. The
@@ -247,6 +251,7 @@ from topological_graph_embedding import SplineGraphEmbedding
 
 model = SplineGraphEmbedding(
     n_centroids=32,
+    backbone_initialization="topological",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,

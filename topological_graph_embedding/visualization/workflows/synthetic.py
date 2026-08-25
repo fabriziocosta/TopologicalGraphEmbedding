@@ -1,5 +1,6 @@
 """Synthetic route-embedding visualization workflow."""
 
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -46,13 +47,20 @@ def fit_datasets(
 
     for index, (name, points) in enumerate(datasets.items()):
         model = SplineGraphEmbedding(
+            backbone_initialization="topological",
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
             max_cycles=max_cycles,
             random_state=index,
         )
-        models[name] = model.fit(points)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Topological landmark constraints could not all be realized by the routing substrate\\.",
+                category=RuntimeWarning,
+            )
+            models[name] = model.fit(points)
         projections[name] = model.transform(points)
         summary.append({
             'dataset': name,
