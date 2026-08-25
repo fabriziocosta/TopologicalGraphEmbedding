@@ -356,7 +356,12 @@ def _estimate_local_topology(
                 X[point_index],
                 base_radius * float(multiplier),
                 inner_radius_fraction,
-                max_edge_length=0.45 * base_radius * float(multiplier),
+                # The annulus is sampled from a noisy cloud.  A short edge
+                # cutoff makes ordinary curved strands look disconnected and
+                # turns gaps in the annulus into false branches.  Keep the
+                # cutoff below the separation of genuinely distinct arms,
+                # while allowing neighbouring samples on one strand to join.
+                max_edge_length=0.75 * base_radius * float(multiplier),
             )
             for multiplier in scale_multipliers
         ]
@@ -898,7 +903,7 @@ def estimate_topology(
         points, max_points=persistence_max_points, random_state=random_state
     )
     normalized = _normalize_persistence_diagram(diagram, scale)
-    threshold = 4.0 if persistence_threshold is None else float(persistence_threshold)
+    threshold = 6.0 if persistence_threshold is None else float(persistence_threshold)
     lifetimes = normalized[:, 1] - normalized[:, 0] if len(normalized) else np.empty(0)
     cycle_count = int(np.sum(np.isfinite(lifetimes) & (lifetimes >= threshold)))
     prototypes = _kmeans(points, min(32, len(points)), random_state)

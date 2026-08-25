@@ -189,7 +189,7 @@ class SplineGraphEmbedding:
         if self.backbone_initialization == "topological":
             # Topological mode uses scale-free persistence.  The legacy mode
             # retains its historical distance-unit threshold semantics.
-            threshold = 4.0 if self.persistence_threshold is None else float(self.persistence_threshold)
+            threshold = 6.0 if self.persistence_threshold is None else float(self.persistence_threshold)
             self.persistence_threshold_ = float(threshold)
             diagram = self.normalized_persistence_diagram_
         elif self.persistence_threshold is None:
@@ -218,6 +218,11 @@ class SplineGraphEmbedding:
         self.linear_structure_ = _is_nearly_linear(
             centroids_original, self.linear_structure_tolerance
         )
+        if self.backbone_initialization == "topological" and self.linear_structure_:
+            # A noisy line can carry a small numerical H1 bar in a subsample;
+            # its one-dimensional geometry is a stronger constraint than that
+            # artifact and must not create a cycle anchor.
+            self.requested_cycle_count_ = 0
         self.backbone_paths_ = None
         if self.backbone_initialization == "topological":
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
@@ -394,6 +399,13 @@ class SplineGraphEmbedding:
                 if len(arms) == 4:
                     junctions = [JunctionRegion(center.copy(), 4, 0.9, [center_index], arms)]
                     central_junction_locked = True
+        if self.requested_cycle_count_ > 0 and not junctions:
+            # A closed one-manifold has two annulus sides at every ordinary
+            # point; finite sampling can label a few of those annuli as one
+            # component.  Persistence already establishes that this is a
+            # cycle, so those isolated endpoint votes are not valid terminal
+            # regions unless a junction is present.
+            endpoints = []
         # Use the coarse tree only to stabilize singular-region candidates.
         # The final routes still come exclusively from the dense weighted kNN
         # substrate below, so this does not reinstate coarsening as the
@@ -652,16 +664,23 @@ class SplineGraphEmbedding:
             candidates.sort(key=lambda item: item[2])
             return [(neighbour, branch) for neighbour, branch, _ in candidates]
 
-        def shortest_path(start: int, target: int) -> CandidatePath | None:
+        def shortest_path(
+            start: int,
+            target: int,
+            blocked_edges: set[tuple[int, int]] | None = None,
+        ) -> CandidatePath | None:
             source_spec = specifications[start]
             target_spec = specifications[target]
             source_vertex = source_spec["vertex"]
             target_vertex = target_spec["vertex"]
             if source_vertex == target_vertex:
                 return None
+            blocked_edges = set() if blocked_edges is None else blocked_edges
             queue: list[tuple[float, int, list[int], int | None]] = []
             best: dict[int, float] = {}
             for neighbour, branch in allowed_first_edges(source_spec):
+                if routing_graph.key(source_vertex, neighbour) in blocked_edges:
+                    continue
                 initial = edge_cost(source_vertex, neighbour)
                 heapq.heappush(queue, (initial, neighbour, [source_vertex, neighbour], branch))
                 best[neighbour] = initial
@@ -703,6 +722,8 @@ class SplineGraphEmbedding:
                     )
                 for neighbour in routing_graph.adjacency[node]:
                     if neighbour in path:
+                        continue
+                    if routing_graph.key(node, neighbour) in blocked_edges:
                         continue
                     candidate_cost = cost + edge_cost(node, neighbour)
                     if candidate_cost < best.get(neighbour, np.inf):
@@ -769,6 +790,24 @@ class SplineGraphEmbedding:
             if candidate.branch_end is not None:
                 used_branches.get(candidate.end_landmark, set()).discard(candidate.branch_end)
 
+        def reroute_cycle_candidate(candidate: CandidatePath) -> CandidatePath | None:
+            """Find a route that does not reuse an already selected cycle arm."""
+            if find(candidate.start_landmark) != find(candidate.end_landmark):
+                return candidate
+            blocked = {
+                routing_graph.key(left, right)
+                for selected_candidate in selected.values()
+                for left, right in pairwise(selected_candidate.vertices)
+            }
+            if not blocked:
+                return candidate
+            alternative = shortest_path(
+                candidate.start_landmark,
+                candidate.end_landmark,
+                blocked_edges=blocked,
+            )
+            return alternative
+
         for candidate in candidates:
             if not valid_degree(candidate):
                 continue
@@ -781,6 +820,9 @@ class SplineGraphEmbedding:
         for candidate in candidates:
             key = graph._key(candidate.start_landmark, candidate.end_landmark)
             if key in selected or not valid_degree(candidate):
+                continue
+            candidate = reroute_cycle_candidate(candidate)
+            if candidate is None or not valid_degree(candidate):
                 continue
             needs_arm = any(
                 (
@@ -801,6 +843,9 @@ class SplineGraphEmbedding:
         for candidate in candidates:
             key = graph._key(candidate.start_landmark, candidate.end_landmark)
             if key in selected or not valid_degree(candidate, enforce_branch_slots=False):
+                continue
+            candidate = reroute_cycle_candidate(candidate)
+            if candidate is None or not valid_degree(candidate, enforce_branch_slots=False):
                 continue
             needs_arm = any(
                 (
@@ -823,6 +868,9 @@ class SplineGraphEmbedding:
             for candidate in candidates:
                 key = graph._key(candidate.start_landmark, candidate.end_landmark)
                 if key in selected or not valid_degree(candidate):
+                    continue
+                candidate = reroute_cycle_candidate(candidate)
+                if candidate is None or not valid_degree(candidate):
                     continue
                 selected[key] = candidate
                 degree[candidate.start_landmark] += 1
