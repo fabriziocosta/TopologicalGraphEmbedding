@@ -4,7 +4,8 @@
 synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
 wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
-(default `4`) and is displayed through a 2D PCA projection.
+(default `4`) and the polygon dataset's number of sides by `POLYGON_SIDES`
+(default `5`). The hypercube is displayed through a 2D PCA projection.
 
 Notebook workflows use `backbone_initialization="topological"` explicitly.
 This keeps notebook figures on the topology-aware initialization path even

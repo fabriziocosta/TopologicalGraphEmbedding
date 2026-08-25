@@ -203,12 +203,25 @@ def generate_synthetic_datasets(
     n: int = 500,
     noise: float = 0.045,
     random_state: int = 0,
+    polygon_sides: int = 5,
 ) -> dict[str, np.ndarray]:
-    """Generate all eight benchmark point clouds with independent seeds."""
+    """Generate all eight benchmark point clouds with independent seeds.
+
+    ``polygon_sides`` controls the regular polygon in the
+    ``"polygon-rays-circles"`` dataset.
+    """
     result = {}
     for offset, (name, factory) in enumerate(SYNTHETIC_DATASETS.items()):
         rng = np.random.default_rng(random_state + offset)
-        result[name] = factory(n=n, noise=noise, rng=rng)
+        if name == "polygon-rays-circles":
+            result[name] = factory(
+                n=n,
+                noise=noise,
+                rng=rng,
+                n_sides=polygon_sides,
+            )
+        else:
+            result[name] = factory(n=n, noise=noise, rng=rng)
     return result
 
 

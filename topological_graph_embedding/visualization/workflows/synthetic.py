@@ -21,9 +21,15 @@ def build_datasets(
     hypercube_dim=4,
     hypercube_noise=0.055,
     random_state=0,
+    polygon_sides=5,
 ):
     """Build the 2D synthetic datasets and the noisy hypercube dataset."""
-    datasets = generate_synthetic_datasets(n=n, noise=noise, random_state=random_state)
+    datasets = generate_synthetic_datasets(
+        n=n,
+        noise=noise,
+        random_state=random_state,
+        polygon_sides=polygon_sides,
+    )
     datasets['hypercube'] = noisy_hypercube(
         n=n,
         dim=hypercube_dim,
@@ -101,10 +107,17 @@ def run_static_demo(
     spline_smoothing=0.02,
     max_cycles=5,
     metro_residual_width=0.02,
+    polygon_sides=5,
 ):
     """Build, fit, plot, and summarize all static synthetic datasets."""
     project_root = Path(project_root)
-    datasets = build_datasets(n, noise, hypercube_dim, hypercube_noise)
+    datasets = build_datasets(
+        n,
+        noise,
+        hypercube_dim,
+        hypercube_noise,
+        polygon_sides=polygon_sides,
+    )
     models, projections, summary = fit_datasets(
         datasets,
         n_centroids=n_centroids,

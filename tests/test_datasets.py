@@ -37,6 +37,11 @@ def test_polygon_rays_circles_is_registered_with_synthetic_datasets():
     assert datasets["polygon-rays-circles"].shape == (32, 2)
 
 
+def test_polygon_side_count_is_exposed_by_dataset_generator():
+    with pytest.raises(ValueError, match="n_sides"):
+        generate_synthetic_datasets(n=8, polygon_sides=2)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"n_sides": 2}, {"radius": 0.0}, {"circle_radius": -0.1}],

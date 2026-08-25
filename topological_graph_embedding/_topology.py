@@ -948,7 +948,7 @@ def estimate_topology(
         points, max_points=persistence_max_points, random_state=random_state
     )
     normalized = _normalize_persistence_diagram(diagram, scale)
-    threshold = 6.0 if persistence_threshold is None else float(persistence_threshold)
+    threshold = 3.0 if persistence_threshold is None else float(persistence_threshold)
     lifetimes = normalized[:, 1] - normalized[:, 0] if len(normalized) else np.empty(0)
     cycle_count = int(np.sum(np.isfinite(lifetimes) & (lifetimes >= threshold)))
     prototypes = _kmeans(points, min(32, len(points)), random_state)

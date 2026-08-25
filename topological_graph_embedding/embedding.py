@@ -189,7 +189,7 @@ class SplineGraphEmbedding:
         if self.backbone_initialization == "topological":
             # Topological mode uses scale-free persistence.  The legacy mode
             # retains its historical distance-unit threshold semantics.
-            threshold = 6.0 if self.persistence_threshold is None else float(self.persistence_threshold)
+            threshold = 3.0 if self.persistence_threshold is None else float(self.persistence_threshold)
             self.persistence_threshold_ = float(threshold)
             diagram = self.normalized_persistence_diagram_
         elif self.persistence_threshold is None:
