@@ -61,9 +61,9 @@ def display_interactive_viewer(
     default_reducer: str | None = None,
     default_n_centroids: int = 32,
     default_max_cycles: int = 5,
+    random_state: int = 0,
     default_persistence_max_points: int = 60,
     default_persistence_threshold: float | None = None,
-    random_state: int = 0,
 ) -> None:
     """Display the shared interactive graph-embedding viewer.
 

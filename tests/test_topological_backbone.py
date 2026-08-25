@@ -235,7 +235,10 @@ def test_topological_shared_cycles_use_opposite_metro_sides():
 
 
 def test_topological_complex_workflow_keeps_cycle_backbones_closed():
-    from topological_graph_embedding.datasets import noisy_hypercube, noisy_polygon_rays_circles
+    from topological_graph_embedding.datasets import (
+        noisy_hypercube,
+        noisy_polygon_rays_circles,
+    )
 
     clouds = [
         noisy_polygon_rays_circles(
