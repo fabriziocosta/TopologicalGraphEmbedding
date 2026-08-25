@@ -468,10 +468,12 @@ class SplineGraphEmbedding:
             # crossings.  They are especially harmful in topological mode:
             # a stub can be promoted to a second junction before dense-graph
             # routing begins.  Keep the user-controlled pruning floor, with
-            # a modest minimum suited to centroid-level geometry.
+            # a modest minimum suited to centroid-level geometry.  The small
+            # margin above one removes the nearly equal-length duplicate
+            # terminal stubs produced when k-means splits one noisy arm.
             _prune_short_terminal_branches(
                 coarse_graph,
-                max(self.prune_branch_factor, 0.75),
+                max(self.prune_branch_factor, 1.05),
             )
         coarse_graph = _merge_nearby_junctions(
             coarse_graph,

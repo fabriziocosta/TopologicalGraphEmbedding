@@ -138,6 +138,22 @@ def test_topological_branching_tree_does_not_promote_centroid_stubs():
     assert all(not chain["closed"] for chain in model.route_chains_)
 
 
+def test_topological_y_keeps_one_junction_across_kmeans_seeds():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["y"]
+    for random_state in range(8):
+        model = SplineGraphEmbedding(
+            n_centroids=32,
+            random_state=random_state,
+            backbone_initialization="topological",
+        ).fit(points)
+
+        assert len(model.junctions_) == 1
+        assert model.junctions_[0].branch_count == 3
+        assert len(model.endpoints_) == 3
+        assert model.junction_degree_shortfall_ == {0: 0}
+        assert model.endpoint_degree_violations_ == []
+
+
 def test_topological_disconnected_cycles_keep_separate_closed_routes():
     points, _ = make_circles(
         n_samples=500,
