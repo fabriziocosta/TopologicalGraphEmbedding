@@ -270,10 +270,12 @@ that the requested persistence-derived cycle target was not realized by the
 available local candidates. A backend name beginning with `numpy` indicates
 that the approximate persistence implementation was used.
 
-The synthetic notebook deliberately uses `persistence_max_points=300` and a
-normalized H1 threshold of `4.0` for its detailed polygon and hypercube cases.
-This is a workflow setting, not an estimator-default change. Effective
-resistance, electrical flow, and their routing weights remain opt-in.
+The synthetic notebook runs simple examples with `persistence_max_points=60`
+and isolates its detailed polygon/hypercube cell at cap `300` with normalized
+threshold `4.0`. This is a workflow setting, not an estimator-default change.
+When Ripser is unavailable, the pure-NumPy fallback internally caps its sample
+at 120 because its full Rips 2-skeleton is cubic. Effective resistance,
+electrical flow, and their routing weights remain opt-in.
 
 ## 10. Reproducibility and limitations
 

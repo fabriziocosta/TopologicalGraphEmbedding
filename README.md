@@ -55,11 +55,10 @@ The repository’s notebook workflows explicitly select
 `backbone_initialization="topological"` so their figures and summaries use the
 topology-aware initializer. The library default remains `"coarsen"` for
 backward compatibility; select the notebook behavior directly in application
-code when needed. The synthetic notebook additionally uses a capped persistence
-sample (`persistence_max_points=300`) and normalized H1 threshold `4.0` so its
-polygon and hypercube examples retain their persistent cycles without making
-the figure-eight over-counted. Electrical resistance/current terms are opt-in,
-not part of the notebook default.
+code when needed. The synthetic notebook runs the seven easy examples with
+`persistence_max_points=60` and puts the polygon/hypercube examples in a
+separate cell using cap `300` and normalized H1 threshold `4.0`. Electrical
+resistance/current terms are opt-in, not part of the notebook default.
 
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.

@@ -14,11 +14,12 @@ default. The workflow wrappers also silence the expected constraint-warning
 when a noisy interactive refit cannot realize every requested incidence;
 direct estimator use still exposes that diagnostic normally.
 
-The synthetic workflow uses `persistence_max_points=300` and a normalized H1
-threshold of `4.0` by default. This higher persistence resolution is important
-for the polygon-with-circles and hypercube examples; it is still bounded so
-the notebook remains practical. Electrical resistance and current terms remain
-disabled unless explicitly requested.
+The synthetic notebook separates the seven easy examples from the
+polygon-with-circles and hypercube examples into independent plotting cells.
+The easy cell uses `persistence_max_points=60`; the complex cell uses `300`
+with normalized H1 threshold `4.0`. Run the complex cell only when its higher
+topological resolution is needed. Electrical resistance and current terms
+remain disabled unless explicitly requested.
 
 The final notebook cell calls the shared `ipywidgets` viewer for selecting a
 dataset and interactively refitting it. Controls are grouped into **Data**,

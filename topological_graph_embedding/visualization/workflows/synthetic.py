@@ -81,7 +81,7 @@ def fit_datasets(
     return models, projections, summary
 
 
-def _plot_summary(summary, figure_dir):
+def _plot_summary(summary, figure_dir, filename='summary_table.png'):
     columns = ['dataset', 'cycles', 'junctions', 'endpoints', 'spline_chains', 'median_residual']
     table_values = [[
         f'{row[column]:.4f}' if column == 'median_residual' else row[column]
@@ -94,7 +94,7 @@ def _plot_summary(summary, figure_dir):
     table.set_fontsize(10)
     table.scale(1, 1.5)
     figure.tight_layout()
-    figure.savefig(figure_dir / 'summary_table.png', dpi=160, bbox_inches='tight')
+    figure.savefig(figure_dir / filename, dpi=160, bbox_inches='tight')
     plt.show()
 
 

@@ -895,9 +895,16 @@ def _estimate_persistence(
     except ImportError:
         # Ripser is optional.  The selected backend is exposed on the fitted
         # estimator, so an unavailable optional dependency does not need to
-        # interrupt normal fitting with a warning.
+        # interrupt normal fitting with a warning.  The pure-NumPy fallback
+        # builds a full Vietoris--Rips 2-skeleton and therefore has cubic
+        # memory/time growth.  Bound its internal sample independently of the
+        # requested cap so a notebook cannot become unresponsive merely
+        # because Ripser is unavailable.
+        fallback_max_points = min(int(max_points), 120)
         return (
-            _rips_h1_persistence(X, max_points=max_points, random_state=random_state),
+            _rips_h1_persistence(
+                X, max_points=fallback_max_points, random_state=random_state,
+            ),
             "numpy",
         )
 
@@ -918,7 +925,9 @@ def _estimate_persistence(
             stacklevel=2,
         )
         return (
-            _rips_h1_persistence(X, max_points=max_points, random_state=random_state),
+            _rips_h1_persistence(
+                X, max_points=min(int(max_points), 120), random_state=random_state,
+            ),
             "numpy-after-ripser-error",
         )
 

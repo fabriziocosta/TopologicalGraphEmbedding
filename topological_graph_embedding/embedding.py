@@ -442,6 +442,50 @@ class SplineGraphEmbedding:
             junctions, endpoints = [], []
             branch_counts = np.empty(0, dtype=int)
             branch_confidence = np.empty(0, dtype=float)
+        if (
+            not junctions
+            and not self.linear_structure_
+            and len(routing_components) > 1
+            and self.requested_cycle_count_ == 0
+        ):
+            # A global centroid MST connects disconnected clouds and can
+            # manufacture junctions on curved components.  For disconnected
+            # open curves, retain at most the two most separated terminal
+            # votes per observation component instead.
+            endpoint_votes: dict[int, list[EndpointRegion]] = {
+                component_id: [] for component_id in range(len(routing_components))
+            }
+            for endpoint in endpoints:
+                vertex = int(np.argmin(np.sum((points - endpoint.center) ** 2, axis=1)))
+                component_id = component_by_vertex.get(vertex)
+                if component_id is not None:
+                    endpoint_votes[component_id].append(endpoint)
+            consolidated: list[EndpointRegion] = []
+            for component_id, component in enumerate(routing_components):
+                votes = endpoint_votes[component_id]
+                if len(votes) >= 2:
+                    pair = max(
+                        (
+                            (left, right)
+                            for left in range(len(votes))
+                            for right in range(left + 1, len(votes))
+                        ),
+                        key=lambda pair: np.linalg.norm(
+                            votes[pair[0]].center - votes[pair[1]].center
+                        ),
+                    )
+                    consolidated.extend([votes[pair[0]], votes[pair[1]]])
+                    continue
+                centered = points[component] - np.mean(points[component], axis=0)
+                _, _, components = np.linalg.svd(centered, full_matrices=False)
+                direction = components[0] if len(components) else np.zeros(points.shape[1])
+                coordinates = centered @ direction
+                for vertex in (
+                    int(component[int(np.argmin(coordinates))]),
+                    int(component[int(np.argmax(coordinates))]),
+                ):
+                    consolidated.append(EndpointRegion(points[vertex].copy(), 0.6, [vertex]))
+            endpoints = consolidated
         central_junction_locked = False
         if (
             self.detect_junctions
@@ -530,6 +574,7 @@ class SplineGraphEmbedding:
                 len(routing_components) > 1
                 and sum(component_cycle_counts) >= len(routing_components)
             )
+            or len(routing_components) > 1
         ) else [
             node for node in coarse_graph.nodes if coarse_graph.degree(node) >= 3
         ]
