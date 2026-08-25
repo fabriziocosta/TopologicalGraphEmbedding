@@ -91,6 +91,74 @@ def noisy_loop_branch(n: int = 500, noise: float = 0.045, rng: np.random.Generat
     return _add_noise(np.vstack([loop, branch]), noise, rng)
 
 
+def noisy_polygon_rays_circles(
+    n: int = 500,
+    noise: float = 0.045,
+    rng: np.random.Generator | None = None,
+    *,
+    n_sides: int = 5,
+    radius: float = 1.0,
+    circle_radius: float = 0.22,
+) -> np.ndarray:
+    """Sample a polygon-and-circles graph with isotropic observation noise.
+
+    The latent graph contains the boundary of a regular polygon, a ray from
+    the center to every vertex, and a circle attached to each vertex.  Each
+    circle is placed outside the polygon so that its nearest point is the
+    corresponding vertex.  Primitive curves are sampled in proportion to
+    their lengths before Gaussian noise is added.
+    """
+    if n_sides < 3:
+        raise ValueError("n_sides must be at least 3")
+    if radius <= 0.0:
+        raise ValueError("radius must be positive")
+    if circle_radius <= 0.0:
+        raise ValueError("circle_radius must be positive")
+
+    rng = np.random.default_rng() if rng is None else rng
+    angles = np.linspace(
+        np.pi / 2.0,
+        np.pi / 2.0 + 2.0 * np.pi,
+        n_sides,
+        endpoint=False,
+    )
+    vertices = radius * np.column_stack([np.cos(angles), np.sin(angles)])
+    center = np.zeros(2)
+
+    polygon_edges = [
+        (vertices[index], vertices[(index + 1) % n_sides])
+        for index in range(n_sides)
+    ]
+    rays = [(center, vertex) for vertex in vertices]
+    segments = polygon_edges + rays
+
+    # Shifting a circle center outward by its radius makes the polygon vertex
+    # the inward tangent point of that circle.
+    circle_centers = vertices + circle_radius * vertices / radius
+    segment_lengths = np.asarray(
+        [np.linalg.norm(end - start) for start, end in segments], dtype=float,
+    )
+    circle_lengths = np.full(n_sides, 2.0 * np.pi * circle_radius)
+    primitive_lengths = np.concatenate([segment_lengths, circle_lengths])
+    probabilities = primitive_lengths / np.sum(primitive_lengths)
+    choices = rng.choice(len(primitive_lengths), size=n, p=probabilities)
+    values = rng.random(n)
+    points = np.empty((n, 2), dtype=float)
+
+    for index, primitive_index in enumerate(choices):
+        if primitive_index < len(segments):
+            start, end = segments[primitive_index]
+            points[index] = start + values[index] * (end - start)
+        else:
+            circle_index = primitive_index - len(segments)
+            angle = 2.0 * np.pi * values[index]
+            points[index] = circle_centers[circle_index] + circle_radius * np.array([
+                np.cos(angle), np.sin(angle),
+            ])
+
+    return _add_noise(points, noise, rng)
+
+
 def noisy_hypercube(
     n: int = 500,
     dim: int = 4,
@@ -127,6 +195,7 @@ SYNTHETIC_DATASETS: dict[str, Callable[..., np.ndarray]] = {
     "figure-eight": noisy_figure_eight,
     "branching-tree": noisy_branching_tree,
     "loop-branch": noisy_loop_branch,
+    "polygon-rays-circles": noisy_polygon_rays_circles,
 }
 
 
@@ -135,7 +204,7 @@ def generate_synthetic_datasets(
     noise: float = 0.045,
     random_state: int = 0,
 ) -> dict[str, np.ndarray]:
-    """Generate all seven benchmark point clouds with independent seeds."""
+    """Generate all eight benchmark point clouds with independent seeds."""
     result = {}
     for offset, (name, factory) in enumerate(SYNTHETIC_DATASETS.items()):
         rng = np.random.default_rng(random_state + offset)
@@ -143,5 +212,9 @@ def generate_synthetic_datasets(
     return result
 
 
-__all__ = ["SYNTHETIC_DATASETS", "generate_synthetic_datasets", "noisy_hypercube"]
-
+__all__ = [
+    "SYNTHETIC_DATASETS",
+    "generate_synthetic_datasets",
+    "noisy_hypercube",
+    "noisy_polygon_rays_circles",
+]

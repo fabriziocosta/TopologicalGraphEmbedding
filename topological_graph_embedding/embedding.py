@@ -462,9 +462,20 @@ class SplineGraphEmbedding:
         # The final routes still come exclusively from the dense weighted kNN
         # substrate below, so this does not reinstate coarsening as the
         # backbone-construction mechanism.
+        coarse_graph = _minimum_spanning_tree(centroids)
+        if self.prune_short_branches:
+            # Centroid MSTs can create very short terminal stubs at noisy
+            # crossings.  They are especially harmful in topological mode:
+            # a stub can be promoted to a second junction before dense-graph
+            # routing begins.  Keep the user-controlled pruning floor, with
+            # a modest minimum suited to centroid-level geometry.
+            _prune_short_terminal_branches(
+                coarse_graph,
+                max(self.prune_branch_factor, 0.75),
+            )
         coarse_graph = _merge_nearby_junctions(
-            _minimum_spanning_tree(centroids),
-            12.0 * self.local_scale_ if self.merge_junction_distance is None else self.merge_junction_distance,
+            coarse_graph,
+            18.0 * self.local_scale_ if self.merge_junction_distance is None else self.merge_junction_distance,
         )
         coarse_junction_nodes = [] if (
             self.linear_structure_
@@ -561,27 +572,33 @@ class SplineGraphEmbedding:
                 + sum(max(0, region.branch_count - 2) for region in junctions)
                 - 2 * (self.requested_cycle_count_ if self.detect_cycles else 0),
             )
-            if len(endpoints) < desired_endpoints:
-                coarse_graph = _minimum_spanning_tree(centroids)
-                leaves = [
-                    node for node in coarse_graph.nodes
-                    if coarse_graph.degree(node) == 1
+            leaves = [
+                node for node in coarse_graph.nodes
+                if coarse_graph.degree(node) == 1
+            ]
+            if desired_endpoints >= 3 and len(leaves) >= desired_endpoints:
+                # For multi-arm crossings, the pruned coarse tree has a much
+                # more stable terminal set than isolated annulus votes.  Use
+                # it even when the annulus detector happens to return the
+                # right count: its locations are otherwise often internal
+                # points on one arm rather than the true terminals.
+                leaves.sort(
+                    key=lambda node: min(
+                        np.linalg.norm(coarse_graph.nodes[node] - region.center)
+                        for region in junctions
+                    ),
+                    reverse=True,
+                )
+                endpoints = [
+                    EndpointRegion(
+                        coarse_graph.nodes[node].copy(),
+                        0.85,
+                        [int(np.argmin(np.sum((points - coarse_graph.nodes[node]) ** 2, axis=1)))],
+                    )
+                    for node in leaves[:desired_endpoints]
                 ]
-                if desired_endpoints >= 3 and len(leaves) >= desired_endpoints:
-                    # For multi-arm crossings, the coarse tree has a much
-                    # more stable terminal set than isolated annulus votes.
-                    # In particular, it prevents two noisy votes on one arm
-                    # from replacing the opposite arm of an X or Y.
-                    leaves.sort()
-                    endpoints = [
-                        EndpointRegion(
-                            coarse_graph.nodes[node].copy(),
-                            0.85,
-                            [int(np.argmin(np.sum((points - coarse_graph.nodes[node]) ** 2, axis=1)))],
-                        )
-                        for node in leaves[:desired_endpoints]
-                    ]
-                    leaves = []
+                leaves = []
+            if len(endpoints) < desired_endpoints:
                 leaves.sort(
                     key=lambda node: min(
                         np.linalg.norm(coarse_graph.nodes[node] - region.center)

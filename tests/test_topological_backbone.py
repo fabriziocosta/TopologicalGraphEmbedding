@@ -119,6 +119,25 @@ def test_topological_junction_routes_are_stable_across_kmeans_seeds():
     assert all(model.landmark_graph_.degree(node) == 1 for node in model.endpoint_node_ids_)
 
 
+def test_topological_branching_tree_does_not_promote_centroid_stubs():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)[
+        "branching-tree"
+    ]
+    model = SplineGraphEmbedding(
+        n_centroids=32,
+        random_state=5,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    assert len(model.junctions_) == 1
+    assert model.junctions_[0].branch_count == 5
+    assert len(model.endpoints_) == 5
+    assert model.landmark_graph_.degree(model.junctions_[0].node_id) == 5
+    assert model.junction_degree_shortfall_ == {0: 0}
+    assert model.endpoint_degree_violations_ == []
+    assert all(not chain["closed"] for chain in model.route_chains_)
+
+
 def test_topological_disconnected_cycles_keep_separate_closed_routes():
     points, _ = make_circles(
         n_samples=500,

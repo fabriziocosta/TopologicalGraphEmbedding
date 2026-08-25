@@ -1,6 +1,6 @@
 # Notebooks
 
-`visualize_synthetic_distributions.ipynb` runs the model on all seven 2D
+`visualize_synthetic_distributions.ipynb` runs the model on all eight 2D
 synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
 wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`

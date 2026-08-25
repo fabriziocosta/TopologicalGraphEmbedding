@@ -703,6 +703,46 @@ def _merge_nearby_junctions(graph: _LandmarkGraph, distance: float | None) -> _L
         representative = min(group)
         for node in group:
             mapping[node] = representative
+
+    # Contract degree-2 connector chains that became internal when two
+    # nearby junctions were merged.  Without this step, two MST junctions
+    # sharing a short connector leave that connector as a false terminal:
+    # both of its incident edges map to the same representative, so one
+    # duplicate edge is discarded and the connector acquires degree one.
+    # Only all-degree-2 components are contracted; a component with a side
+    # branch may contain a genuine terminal and must remain explicit.
+    junction_set = set(junctions)
+    eligible = {
+        node for node in graph.nodes
+        if node not in junction_set and graph.degree(node) == 2
+    }
+    remaining = set(eligible)
+    while remaining:
+        root = min(remaining)
+        remaining.remove(root)
+        component = {root}
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            for neighbour in graph.neighbors(node):
+                if neighbour in remaining:
+                    remaining.remove(neighbour)
+                    component.add(neighbour)
+                    stack.append(neighbour)
+        boundary_representatives = [
+            mapping[neighbour]
+            for node in component
+            for neighbour in graph.neighbors(node)
+            if neighbour not in component and neighbour in junction_set
+        ]
+        if (
+            len(boundary_representatives) >= 2
+            and len(set(boundary_representatives)) == 1
+        ):
+            representative = boundary_representatives[0]
+            for node in component:
+                mapping[node] = representative
+
     new_nodes: dict[int, list[Array]] = {}
     for node, point in graph.nodes.items():
         representative = mapping[node]

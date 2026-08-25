@@ -1,254 +1,243 @@
-# Sparse topological spline graph embeddings
+# Sparse spline graph embeddings for noisy point clouds
 
 ## Abstract
 
-Topological graph embedding represents a noisy point cloud with a compact
-network of smooth routes. The network is intended to preserve both intrinsic
-position and branching or looping structure: an observation is assigned to a
-route, projected to a longitudinal position on that route, and accompanied by
-its off-route residual. The implementation is designed for two-dimensional
-visual analysis and for high-dimensional scientific data, where the route
-network is fitted in the original feature space and visualized separately.
+Many datasets are stored as point clouds: each observation is a vector of
+numbers, but the observations may be arranged around a simpler shape. That
+shape might be a line, a loop, or a branching structure such as a Y-shaped
+trajectory.
 
-The method combines landmark compression, persistent H1 diagnostics, a sparse
-symmetrized k-nearest-neighbor topology, spline route fitting, deterministic
-normal frames, and a metro-style visualization. Numerical fallbacks are
-explicitly reported so that a result remains inspectable when optional
-backends are unavailable.
+This project represents such data with a small graph whose edges are smooth
+curves. It first builds a graph from nearby observations, estimates which
+branches and loops are supported by the data, and selects a sparse graph
+backbone. It then fits a curve to each backbone route. Every observation is
+assigned to its nearest route and receives a route identifier, a position, a
+projected point, a local tangent, and a residual showing how far it lies from
+the route.
 
-## 1. Problem formulation
+The routes are fitted in the data's feature space. Principal component
+analysis (PCA), multidimensional scaling (MDS), Uniform Manifold Approximation
+and Projection (UMAP), and the metro-style layout are used only to display the
+result. They do not determine the fitted routes.
 
-Let
+The detailed implementation reference, including backends, diagnostics, and
+all public attributes, is available in [Implementation details](implementation.md).
 
-$$
-X = \{x_1,\ldots,x_n\}, \qquad x_i \in \mathbb{R}^d
-$$
+## 1. The problem
 
-be observations sampled around an unknown one-dimensional structure. The
-structure may contain endpoints, junctions, open routes, and closed loops. We
-seek a small route network
-
-$$
-\Gamma = \{\gamma_r : [0,1] \rightarrow \mathbb{R}^d\}_{r=1}^R
-$$
-
-such that every observation has a nearest route coordinate
+Suppose the input is a collection of $n$ observations, each with $d$ features:
 
 $$
-(r_i, u_i) = \arg\min_{r,u}\|x_i - \gamma_r(u)\|_2.
+X = \{x_1,\ldots,x_n\}, \qquad x_i\in\mathbb{R}^d.
 $$
 
-The public result for an observation contains:
+The data may be high-dimensional, but we assume that its important structure
+is approximately one-dimensional. In other words, nearby observations should
+mostly lie along a small number of connected curves. Those curves can meet at
+junctions and can form loops.
 
-$$
-(r_i, u_i, \hat{x}_i, e_i, \|e_i\|_2, v_i),
-$$
+The goal is not simply to create a two-dimensional picture. The goal is to
+recover useful coordinates for the original observations:
 
-where `route_id` is the route index, `position` is the longitudinal
-coordinate, `projected` is \(\hat{x}_i\), `residual` is
-\(e_i=x_i-\hat{x}_i\), `residual_norm` is its magnitude, and `tangent` is the
-local route tangent in fitting coordinates.
+- which branch or route contains an observation;
+- where the observation lies along that route; and
+- how far the observation is from the route.
 
-## 2. Fitting pipeline
+### A simple example
 
-### 2.1 Validation and metric preparation
+Imagine observations sampled around a noisy Y-shaped trajectory. A standard
+dimensionality-reduction plot may show the Y shape, but it does not necessarily
+say which branch each observation belongs to or where it lies along that
+branch. A spline graph embedding makes those quantities explicit.
 
-The estimator accepts finite, non-empty two-dimensional numeric arrays. Empty
-inputs, zero-feature inputs, non-finite values, feature-count mismatches, and
-invalid parameter values fail with explicit errors.
+## 2. Representation and returned values
 
-When `standardize=True`, the point cloud is centered and scaled featurewise
-for distance, persistence, landmark, and spline calculations. Constant
-features receive unit scale, preserving finite coordinates for degenerate
-clouds. The original coordinates and the fitted affine transform are retained
-for public projections and plotting.
+The method represents the hidden structure as a collection of routes. Route
+$r$ is a curve $\gamma_r(u)$, where the parameter $u$ ranges from $0$ to $1$.
+For an observation $x_i$, the algorithm approximately solves
 
-The fitted local scale is the median non-zero nearest-neighbor distance. A
-fully duplicated cloud has no non-zero neighbor distance, so the implementation
-uses a small finite floor instead of producing `NaN`.
+$(r_i,u_i)\approx\arg\min_{r,u}\|z_i-\gamma_r(u)\|_2$,
 
-### 2.2 Initialization strategies
+where $z_i$ is the coordinate used during fitting. The implementation evaluates
+this search on densely sampled route segments, so it is an approximation to a
+continuous projection.
 
-`SplineGraphEmbedding` preserves the original `coarsen` initializer by
-default. It compresses observations with deterministic k-means, builds an
-MST, adds local cycle-closing edges, and then extracts spline chains.
+The position $u_i$ is normalized progress along a route. It is not a physical
+distance and should not be compared across routes with different lengths
+without additional scaling.
 
-The optional `topological` initializer separates topology, connectivity, and
-geometry. It builds a weighted symmetric kNN graph over standardized
-observations. Edge lengths provide geometric cost; affinity weights provide
-conductances for electrical diagnostics. The graph is a dense routing
-substrate and is not itself returned as the manifold backbone. If it has
-disconnected natural components, a bridge is retained for electrical
-diagnostics only; candidate routes remain within their original component.
+### Original and fitting coordinates
 
-All repository notebook workflows explicitly select this initializer. The
-estimator’s Python API retains `backbone_initialization="coarsen"` as its
-compatibility default; callers can select `"topological"` explicitly.
+When standardization is enabled, each feature is centered and scaled before
+distances and routes are computed. This prevents a feature with large numeric
+units from dominating the geometry. Constant features receive unit scale so
+that duplicated or degenerate data remain finite.
 
-Persistent H1 is computed on the existing capped persistence backend. Raw bars
-remain available in `persistence_diagram_`; `normalized_persistence_diagram_`
-expresses birth and death values in median-nearest-neighbour units. The
-significant normalized bars determine the requested cycle rank.
+The algorithm fits routes in these fitting coordinates, but converts projected
+points and residuals back to the original feature units. Tangents remain in
+fitting coordinates because they define the local geometry used for normal
+coordinates.
 
-Multiscale annuli around k-means prototype candidates provide local branch
-counts. Stable counts of one, two, or at least three identify endpoints,
-regular points, and junctions. Nearby candidates are clustered into one
-`JunctionRegion` or `EndpointRegion`, each retaining a center, confidence, and
-source members. Coarse landmarks are used only to stabilize singular-region
-candidates; final routes are selected through the dense graph.
+### Public result
 
-### 2.3 Landmark compression and local geometry
+For each observation, `EmbeddingResult` provides:
 
-The point cloud is compressed to at most `n_centroids` landmarks by a
-deterministic NumPy k-means implementation with k-means++ initialization. Its
-distance calculations are blocked: the implementation forms point-anchor
-Gram blocks rather than a dense `(n, k, d)` tensor. This keeps memory usage
-linear in the number of observations and features for each block.
-
-The landmark graph is the computational representation of the topology. Each
-landmark retains its standardized coordinate, and graph edges store Euclidean
-lengths in the fitting metric.
-
-### 2.4 Sparse topology and electrical connectivity
-
-In topological mode, local PCA supplies unoriented tangent fields at ordinary
-vertices and independently estimated outward directions for each junction
-arm. Candidate path departures are rejected when their oriented angle exceeds
-`max_branch_angle_degrees`; ordinary edges use the sign-invariant tangent
-consistency term (1-|u_i^T u_j|).
-
-When enabled, the conductance Laplacian supplies effective resistance,
-leverage (w_eR_e), aggregate source-target current, and an optional Kron
-reduction on retained landmarks. These quantities are connectivity evidence,
-not topology; their routing weights default to zero.
-
-The selector first builds a low-cost connected landmark structure, completes
-missing junction arms, removes redundant cycles when necessary, and adds
-cycle-closing candidates until the requested rank is reached. Maximal degree-2
-paths are retained as support points but collapsed into `backbone_graph_` edges
-before spline fitting.
-
-In coarsen mode, the initial graph remains a minimum spanning tree. The MST is
-used only to guarantee connectivity; it is not a global cycle generator.
-Additional candidate edges come from the symmetrized landmark kNN graph,
-controlled by `topology_neighbors` and defaulting to six.
-
-For each candidate edge, the estimator rejects microscopic chords and edges
-that do not close a sufficiently long local path. Among eligible local edges,
-the route with the strongest path-to-chord contrast is selected until the
-requested H1 target is reached or candidates are exhausted. This restricts
-topological shortcuts to local landmark neighborhoods and avoids the dense
-all-pairs shortcut heuristic used by the prototype.
-
-Persistent homology supplies the target. Ripser is used when available;
-otherwise a NumPy Vietoris–Rips H1 fallback is used. Backend selection and
-unexpected Ripser failures are recorded; unexpected failures are warned about.
-
-After fitting, topology diagnostics are available as:
-
-| Attribute | Meaning |
+| Field | Meaning |
 | --- | --- |
-| `persistent_cycle_count_` | Significant H1 bars under the persistence threshold |
-| `requested_cycle_count_` | Target after applying `max_cycles` |
-| `realized_cycle_count_` | Cycle rank of the fitted landmark graph |
-| `topology_shortfall_` | Requested cycles that local candidates could not realize |
-| `persistence_backend_` | `ripser`, `numpy`, or `numpy-after-ripser-error` |
-| `topology_candidate_edges_` | Symmetrized local kNN candidates |
-| `cycle_count_` | Significant normalized H1 cycle count |
-| `junction_regions_` / `endpoint_regions_` | Clustered local-topology regions |
-| `backbone_graph_` / `backbone_paths_` | Selected abstract graph and point-level route supports |
-| `effective_resistance_` / `edge_leverage_` | Optional edge electrical diagnostics |
-| `electrical_traffic_` | Optional normalized aggregate current support |
-| `routing_components_` / `component_cycle_counts_` | Natural routing components and their persistent cycle counts |
-| `candidate_paths_` | Constrained dense-substrate routes considered by the selector |
+| `route_id` | Integer identifying the selected route |
+| `position` | Normalized position on that route, in $[0,1]$ |
+| `projected` | Nearest point on the fitted route, in original feature units |
+| `residual` | Difference between the observation and its projection |
+| `residual_norm` | Euclidean length of the residual |
+| `tangent` | Local unit tangent in fitting coordinates |
 
-Linear structure detection produces an ordered path graph for noisy lines. For
-other geometries, short terminal branches can be pruned and nearby junctions
-merged using validated geometric thresholds. The resulting route chains are
-stored in `route_chains_`, while `junctions_` and `endpoints_` identify graph
-landmarks by degree.
+If $\hat{x}_i$ is the projected point, the residual is
+$e_i=x_i-\hat{x}_i$ and `residual_norm` is $\|e_i\|_2$.
 
-## 3. Route geometry and projection
+## 3. End-to-end algorithm
 
-Each route chain is represented by a dense sampled curve. SciPy smoothing
-splines are preferred for open and closed chains. If SciPy fitting is
-unavailable or fails numerically, a deterministic NumPy Catmull–Rom/polyline
-fallback is used. Every route records its backend in `route_backends_`.
+The complete process can be summarized as follows:
 
-Projection is batched per route. Each batch is compared with the sampled
-route using squared distances, and the closest route wins. The implementation
-does not return an invalid route identifier: if no route can be selected, it
-raises an explicit diagnostic containing the invalid observation count.
+```text
+Input: point cloud X
+1. Validate X and optionally standardize its features.
+2. Build a graph connecting nearby observations.
+3. Compress the data into landmarks when needed.
+4. Estimate endpoints, junctions, and loops.
+5. Select a sparse graph backbone.
+6. Fit a smooth route to each backbone path.
+7. Project every observation onto its nearest route.
+8. Return route coordinates, projections, tangents, and residuals.
+```
 
-Projection is expressed publicly in the original feature coordinates. The
-tangent is retained in standardized fitting coordinates because that is the
-metric used to define the local normal hyperplane.
+### 3.1 Prepare the data
 
-## 4. Deterministic normal coordinates
+The estimator first checks that the input is a finite, non-empty, two-
+dimensional numeric array. It also checks feature counts and parameter values.
 
-For a route tangent \(v(u)\), the normal coordinate system is an orthonormal
-basis of the \((d-1)\)-dimensional complement of \(v(u)\). A naïve basis built
-from the query batch can change when a subset is transformed. The estimator
-therefore learns a frame grid for every fitted route:
+If standardization is requested, the data is centered and scaled feature by
+feature. The implementation also computes a local scale from non-zero nearest-
+neighbor distances. A small finite fallback is used when all observations are
+duplicates.
 
-1. initialize the first frame by deterministic Gram–Schmidt against the
-   coordinate axes;
-2. transport the frame along a fixed route parameter grid using projection and
-   QR re-orthogonalization;
-3. interpolate the stored grid for each query tangent;
-4. re-orthogonalize against the query tangent for numerical stability.
+### 3.2 Build a neighborhood graph
 
-Closed routes use a periodic parameter grid and explicitly reuse the first
-frame at the seam. Consequently, transforming the full dataset and then a
-subset produces identical normal coordinates for the shared observations in
-2D, 3D, and higher dimensions.
+The method connects each observation to nearby observations. This is called a
+*k-nearest-neighbor graph* or kNN graph: each observation chooses its $k$
+closest neighbors, and the resulting edges are symmetrized so that an edge is
+available in either direction.
 
-The estimator exposes these values through:
+The graph is a source of candidate structure, not necessarily the final
+answer. For larger datasets, observations are first compressed into
+*landmarks*. Landmarks are representative points found with deterministic
+k-means. Working with landmarks makes later graph operations less expensive.
+
+The implementation supports two initialization modes:
+
+- `coarsen` builds a landmark minimum spanning tree (MST) and then considers
+  local edges that can add loops. An MST connects the landmarks with low total
+  edge length but contains no cycles.
+- `topological` uses the neighborhood graph together with local geometric and
+  topology signals to select the backbone. It is more explicit about branches
+  and loops.
+
+The Python API keeps `coarsen` as its compatibility default. Applications can
+select `topological` when topology-aware initialization is desired.
+
+### 3.3 Detect branches and loops
+
+The method uses two kinds of evidence.
+
+First, local neighborhoods are examined at several distance scales. Around a
+candidate point, the algorithm counts how many connected pieces appear in thin
+rings. Stable patterns help distinguish an endpoint, an ordinary point, and a
+junction. Nearby candidates are grouped into one region so that a noisy
+junction is not treated as many separate junctions.
+
+Second, the method uses *persistent homology* to estimate loops. Persistent
+homology repeats a connectivity analysis at many distance scales. Its H1
+component tracks one-dimensional holes, which correspond to loops in the
+data. A feature that persists across many scales is stronger evidence of a
+real loop than a feature that appears at only one scale.
+
+The persistence estimate supplies a target cycle count. The selected graph may
+realize fewer cycles if the available local candidate edges cannot support all
+of them. The implementation records both the requested and realized counts.
+
+### 3.4 Select the backbone
+
+The selector combines edge length, local tangent agreement, density, and
+optional connectivity evidence. A path that makes a sharp, unsupported turn
+is less attractive than one that follows the local geometry.
+
+Some optional calculations treat graph edges like electrical resistors. The
+resulting effective resistance and current measures describe how strongly an
+edge contributes to connectivity. They are supporting evidence only; they do
+not define the topology by themselves.
+
+The selector starts with a connected structure, adds missing junction arms,
+and considers local cycle-closing edges. Long chains of ordinary degree-two
+vertices are compressed into single backbone edges before curve fitting.
+
+### 3.5 Fit smooth routes
+
+Each backbone path becomes one open or closed route. The preferred
+implementation uses smoothing splines. If SciPy is unavailable or numerical
+fitting fails, a deterministic NumPy Catmull–Rom or polyline fallback is used.
+
+The route is sampled densely. This sampled representation is used both for
+projection and for computing the local tangent, so the geometry used for
+assignment stays consistent with the geometry used for visualization.
+
+### 3.6 Project observations
+
+For every observation, the implementation tests its distance to the sampled
+segments of every route. The closest valid route wins. The projected point is
+returned in the original feature coordinates, while the route tangent is
+returned in fitting coordinates.
+
+If no route can be selected, the transform operation raises an error with the
+number of invalid observations instead of returning a misleading route ID.
+
+## 4. Normal coordinates
+
+The residual tells us how far an observation is from a route, but in
+high-dimensional data it can also be useful to describe the direction of that
+residual. At a point on a curve, the tangent gives the along-route direction.
+The remaining $d-1$ directions form the local normal space.
+
+The implementation stores a deterministic orthonormal basis for this normal
+space along every route. It constructs the first basis from the coordinate
+axes, transports it along the route, and repeatedly re-orthogonalizes it for
+numerical stability. Reusing the stored frame means that transforming a
+dataset and transforming a subset produce the same normal coordinates for
+shared observations, up to floating-point roundoff.
+
+The public method is:
 
 ```python
 normal = model.normal_coordinates(result)
 ```
 
-The returned array has shape `(n_samples, n_features - 1)`. In one dimension,
-the normal coordinate array has zero columns.
+The returned array has shape `(n_samples, n_features - 1)`. In one feature
+dimension, it has zero columns because there is no normal direction.
 
-## 5. Visualization architecture
+## 5. Visualization
 
-Visualization is part of the main package rather than a notebook-local copy.
-The package layout is:
+The fitted routes can be displayed in several ways.
 
-```text
-topological_graph_embedding/
-├── embedding.py                 # public estimator
-├── results.py                   # typed immutable result
-├── _topology.py                 # landmarks, graph, persistence
-├── _curves.py                   # route fitting and projection
-├── _frames.py                   # deterministic normal frames
-├── sklearn.py                   # optional sklearn adapters
-├── datasets.py                  # synthetic point clouds
-└── visualization/
-    ├── metro.py                 # MetroLayout schematic routing
-    ├── network.py               # fitted-network Matplotlib rendering
-    ├── plots.py                 # static plots and route evaluation
-    ├── interactive.py           # Plotly 3D rendering
-    ├── reduction.py             # PCA/MDS/UMAP display reducers
-    └── paul.py                  # optional Paul et al. display helpers
-```
+- A feature-space plot shows the data and the fitted network directly when
+  the data has two or three dimensions.
+- PCA, MDS, or UMAP can reduce high-dimensional data for display. These are
+  visualization steps; they do not refit the route network.
+- The metro-style layout draws a readable schematic of branches, junctions,
+  and loops. Its coordinates are designed for legibility, not for preserving
+  distances in the original data.
 
-`MetroLayout` converts graph connectivity, route arc length, junction discs,
-and endpoint directions into a readable schematic. Observations are placed at
-their route positions and offset laterally using residual magnitude and local
-residual PCA directions. `plot_network` provides a direct feature-space view;
-`plots.py` provides the shared four-panel renderer used by the notebooks; and
-`interactive.py` adds a Plotly route/residual-plane view.
+All visualizations consume the same `EmbeddingResult` fields. This keeps route
+identity, position, projection, and residual meaning consistent across views.
 
-Visualization functions consume `EmbeddingResult` attributes directly. This
-keeps route identity, position, projection, and residual semantics consistent
-across static, schematic, and interactive views.
-
-## 6. Estimator interfaces
-
-The core estimator is:
+## 6. Minimal Python example
 
 ```python
 from topological_graph_embedding import SplineGraphEmbedding
@@ -260,64 +249,36 @@ model = SplineGraphEmbedding(
     topology_neighbors=6,
     random_state=0,
 )
+
 result = model.fit_transform(X)
 normal = model.normal_coordinates(result)
 ```
 
-`EmbeddingResult` is a frozen dataclass with six fields:
-`route_id`, `position`, `projected`, `residual`, `residual_norm`, and
-`tangent`. It is attribute-based and intentionally does not implement mapping
-or legacy field aliases.
-
-The optional sklearn adapters are:
+The result can be inspected directly:
 
 ```python
-from topological_graph_embedding.sklearn import (
-    SplineEmbeddingClassifier,
-    SplineEmbeddingTransformer,
-)
-
-transformer = SplineEmbeddingTransformer()
-features = transformer.fit_transform(X)
-result = transformer.transform_result(X)
-
-classifier = SplineEmbeddingClassifier(estimator=downstream_estimator)
-classifier.fit(X_train, y_train)
-predictions = classifier.predict(X_test)
+print(result.route_id)
+print(result.position)
+print(result.residual_norm)
 ```
 
-The transformer emits numeric route indicators, position, residual norm, and
-scaled residual components. The classifier delegates to a cloned downstream
-estimator using route/position features plus deterministic normal coordinates.
+The optional scikit-learn adapters and their feature conventions are described
+in [Implementation details](implementation.md).
 
-## 7. Computational considerations
+## 7. Cost, reproducibility, and limitations
 
-Let `m` be the number of landmarks, `d` the feature dimension, and `b` a
-distance block size. Landmark k-means uses blocked distance products of size
-`b × m`; topology calculations operate on the much smaller landmark graph.
-Route projection is batched over observations and route samples rather than
-materializing a global observation-route-feature tensor. The persistence
-fallback is intended for moderate point clouds and may be capped with
-`persistence_max_points`.
+Landmark compression limits the size of the graph used for topology selection.
+Distance calculations are processed in blocks rather than building one large
+observation-by-landmark-by-feature tensor. Route projection is also batched.
+The persistence fallback is intended for moderate point clouds and can be
+capped with `persistence_max_points`.
 
-The sparse topology is an approximation. Its diagnostics make approximation
-visible: a nonzero `topology_shortfall_` means the persistence target was not
-realized by the available local candidates. A backend string beginning with
-`numpy` means the approximate persistence implementation was used.
+Randomized stages accept `random_state`. Results can still vary slightly with
+the installed SciPy or Ripser versions when optional backends are available;
+the selected backend is recorded by the estimator.
 
-## 8. Reproducibility and limitations
-
-Randomized stages use `random_state`, including landmark initialization and
-subsampling for capped persistence. Numerical outputs can still depend on the
-installed SciPy/Ripser versions when optional backends are available; the
-chosen backend is recorded on the fitted estimator.
-
-The route network is a one-dimensional approximation. It does not model
-branch-specific density, uncertainty, or a full continuous projection
-optimization. Visualization is also a display transform: metro coordinates
-are not intended to preserve distances in the original feature space.
-
-The test suite covers synthetic line, branch, circle, figure-eight, and loop
-topologies; projection validity; degenerate and one-dimensional data;
-batch-independent normal frames; backend reporting; sklearn compatibility;
-visualization; package installation; and the absence of removed legacy names.
+The method is an approximate one-dimensional representation. It does not
+model branch-specific density or uncertainty, and projection is not a full
+continuous optimization. A topology target may not be realized when local
+candidate edges are insufficient. Finally, a metro layout is a schematic
+display and should not be interpreted as a metric embedding.
