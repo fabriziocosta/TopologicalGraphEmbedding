@@ -68,15 +68,43 @@ def noisy_figure_eight(n: int = 500, noise: float = 0.045, rng: np.random.Genera
     return _add_noise(points, noise, rng)
 
 
-def noisy_branching_tree(n: int = 500, noise: float = 0.045, rng: np.random.Generator | None = None) -> np.ndarray:
+def noisy_binary_tree(
+    n: int = 500,
+    noise: float = 0.045,
+    rng: np.random.Generator | None = None,
+    *,
+    depth: int = 3,
+) -> np.ndarray:
+    """Sample a noisy complete binary tree in two dimensions.
+
+    ``depth`` is the number of edges from the root to every leaf.  Thus a
+    depth-1 tree has one root and two leaves, while a depth-3 tree has eight
+    leaves and seven internal branching nodes.
+    """
+    if isinstance(depth, bool) or not isinstance(depth, (int, np.integer)) or depth < 1:
+        raise ValueError("depth must be a positive integer")
+
     rng = np.random.default_rng() if rng is None else rng
-    center = np.array([0.0, -0.15])
-    upper = np.array([0.0, 0.95])
-    left = np.array([-0.85, 1.45])
-    right = np.array([0.85, 1.45])
-    lower_left = np.array([-0.95, -1.15])
-    lower_right = np.array([0.95, -1.15])
-    segments = [(center, endpoint) for endpoint in [upper, left, right, lower_left, lower_right]]
+    depth = int(depth)
+    horizontal_span = 2.5
+    vertical_span = 2.4
+    nodes_by_level: list[list[np.ndarray]] = []
+    for level in range(depth + 1):
+        count = 2**level
+        if level == 0:
+            x_positions = np.zeros(1, dtype=float)
+        else:
+            x_positions = np.linspace(-horizontal_span / 2.0, horizontal_span / 2.0, count)
+        y = vertical_span / 2.0 - vertical_span * level / depth
+        nodes_by_level.append([
+            np.array([x, y], dtype=float) for x in x_positions
+        ])
+
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+    for level in range(1, depth + 1):
+        parents = nodes_by_level[level - 1]
+        for child_index, child in enumerate(nodes_by_level[level]):
+            segments.append((parents[child_index // 2], child))
     return _add_noise(_sample_segments(segments, n, rng), noise, rng)
 
 
@@ -193,7 +221,7 @@ SYNTHETIC_DATASETS: dict[str, Callable[..., np.ndarray]] = {
     "x": noisy_x,
     "circle": noisy_circle,
     "figure-eight": noisy_figure_eight,
-    "branching-tree": noisy_branching_tree,
+    "binary-tree": noisy_binary_tree,
     "loop-branch": noisy_loop_branch,
     "polygon-rays-circles": noisy_polygon_rays_circles,
 }
@@ -204,11 +232,13 @@ def generate_synthetic_datasets(
     noise: float = 0.045,
     random_state: int = 0,
     polygon_sides: int = 5,
+    binary_tree_depth: int = 3,
 ) -> dict[str, np.ndarray]:
     """Generate all eight benchmark point clouds with independent seeds.
 
     ``polygon_sides`` controls the regular polygon in the
-    ``"polygon-rays-circles"`` dataset.
+    ``"polygon-rays-circles"`` dataset, and ``binary_tree_depth`` controls
+    the root-to-leaf depth of the ``"binary-tree"`` dataset.
     """
     result = {}
     for offset, (name, factory) in enumerate(SYNTHETIC_DATASETS.items()):
@@ -220,6 +250,13 @@ def generate_synthetic_datasets(
                 rng=rng,
                 n_sides=polygon_sides,
             )
+        elif name == "binary-tree":
+            result[name] = factory(
+                n=n,
+                noise=noise,
+                rng=rng,
+                depth=binary_tree_depth,
+            )
         else:
             result[name] = factory(n=n, noise=noise, rng=rng)
     return result
@@ -228,6 +265,7 @@ def generate_synthetic_datasets(
 __all__ = [
     "SYNTHETIC_DATASETS",
     "generate_synthetic_datasets",
+    "noisy_binary_tree",
     "noisy_hypercube",
     "noisy_polygon_rays_circles",
 ]

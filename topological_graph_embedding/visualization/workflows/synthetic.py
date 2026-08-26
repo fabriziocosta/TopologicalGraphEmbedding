@@ -22,6 +22,7 @@ def build_datasets(
     hypercube_noise=0.055,
     random_state=0,
     polygon_sides=5,
+    binary_tree_depth=3,
 ):
     """Build the 2D synthetic datasets and the noisy hypercube dataset."""
     datasets = generate_synthetic_datasets(
@@ -29,6 +30,7 @@ def build_datasets(
         noise=noise,
         random_state=random_state,
         polygon_sides=polygon_sides,
+        binary_tree_depth=binary_tree_depth,
     )
     datasets['hypercube'] = noisy_hypercube(
         n=n,
@@ -115,6 +117,7 @@ def run_static_demo(
     max_cycles=5,
     metro_residual_width=0.02,
     polygon_sides=5,
+    binary_tree_depth=3,
     persistence_max_points=300,
 ):
     """Build, fit, plot, and summarize all static synthetic datasets."""
@@ -125,6 +128,7 @@ def run_static_demo(
         hypercube_dim,
         hypercube_noise,
         polygon_sides=polygon_sides,
+        binary_tree_depth=binary_tree_depth,
     )
     models, projections, summary = fit_datasets(
         datasets,

@@ -137,7 +137,7 @@ The repository also contains a command-line demo:
 python run_demo.py --output-dir outputs
 ```
 
-It generates synthetic line, branch, loop, figure-eight, and
+It generates synthetic line, binary-tree, loop, figure-eight, and
 polygon/radial-circle examples and writes figures plus a CSV summary to
 `outputs/`.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from itertools import pairwise
+from itertools import pairwise, product
 from typing import Any
 
 import numpy as np
@@ -394,6 +394,96 @@ def _estimate_local_topology(
         branch_counts,
         confidences,
     )
+
+
+def _hypercube_junction_regions(
+    X: Array,
+    local_scale: float,
+) -> tuple[list[JunctionRegion], int, int | None]:
+    """Detect cube-like corners from signed coordinate extremes.
+
+    A sampled hypercube is not well served by a centroid MST: removing the
+    cycles from the cube leaves an arbitrary tree and therefore hides some of
+    the true corner vertices.  In standardized coordinates, every corner is
+    characterized by one of the ``2**d`` sign patterns and each incident arm
+    changes exactly one coordinate.  Require all sign patterns and all arms to
+    have substantial support before using this specialized geometric
+    diagnostic; ordinary clouds do not pass that joint test.
+
+    Returns the junction regions, the number of square faces, and the detected
+    dimension.  The face count is intentionally separate from H1 cycle rank:
+    a 3D cube has six faces but only five independent cycles.
+    """
+    points = np.asarray(X, dtype=float)
+    dimension = points.shape[1]
+    if dimension < 3 or dimension > 5 or len(points) < 4 * (2**dimension):
+        return [], 0, None
+    if not np.all(np.isfinite(points)):
+        return [], 0, None
+
+    scale = max(float(local_scale), 1e-8)
+    sign_patterns = [np.asarray(signs, dtype=float) for signs in product((-1.0, 1.0), repeat=dimension)]
+    corners: list[tuple[np.ndarray, int, np.ndarray]] = []
+    corner_scores: list[float] = []
+    for signs in sign_patterns:
+        scores = np.min(points * signs[None, :], axis=1)
+        vertex = int(np.argmax(scores))
+        score = float(scores[vertex])
+        # Standardized noisy cube corners are normally well beyond 0.8 in
+        # every coordinate.  The lower bound leaves room for moderate noise
+        # while rejecting sign patterns supported only by an interior cloud.
+        if score < 0.65:
+            return [], 0, None
+        corners.append((points[vertex].copy(), vertex, signs))
+        corner_scores.append(score)
+
+    corner_points = np.asarray([corner[0] for corner in corners])
+    corner_distances = np.linalg.norm(
+        corner_points[:, None, :] - corner_points[None, :, :], axis=2
+    )
+    corner_distances[np.eye(len(corner_points), dtype=bool)] = np.inf
+    if np.min(corner_distances) <= 0.4:
+        return [], 0, None
+    magnitudes = np.abs(corner_points)
+    if np.max(np.std(magnitudes, axis=0) / np.maximum(np.mean(magnitudes, axis=0), 1e-8)) > 0.35:
+        return [], 0, None
+
+    regions: list[JunctionRegion] = []
+    arm_radius = max(0.28, 12.0 * scale)
+    for center, vertex, signs in corners:
+        arms: list[np.ndarray] = []
+        for axis in range(dimension):
+            direction = np.zeros(dimension, dtype=float)
+            direction[axis] = -signs[axis]
+            displacement = points - center
+            projection = displacement @ direction
+            orthogonal = np.linalg.norm(
+                displacement - projection[:, None] * direction[None, :],
+                axis=1,
+            )
+            valid = np.flatnonzero(
+                (projection >= max(2.0 * scale, 0.03))
+                & (projection <= 1.9)
+                & (orthogonal <= arm_radius)
+            )
+            if len(valid) < 3:
+                return [], 0, None
+            order = np.argsort(
+                orthogonal[valid] + 0.03 * np.abs(projection[valid] - 0.65),
+                kind="mergesort",
+            )
+            arms.append(valid[order[: min(len(order), 32)].astype(int)])
+        regions.append(
+            JunctionRegion(
+                center=center,
+                branch_count=dimension,
+                confidence=float(np.clip(np.mean(corner_scores), 0.0, 1.0)),
+                member_indices=[vertex],
+                arm_indices=arms,
+            )
+        )
+    face_count = (dimension * (dimension - 1) * 2 ** (dimension - 2))
+    return regions, int(face_count), dimension
 
 
 class _LandmarkGraph:

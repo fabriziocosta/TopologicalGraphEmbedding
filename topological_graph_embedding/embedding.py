@@ -31,6 +31,7 @@ from ._topology import (
     _estimate_local_topology,
     _estimate_persistence,
     _extract_chains,
+    _hypercube_junction_regions,
     _is_nearly_linear,
     _kmeans,
     _LandmarkGraph,
@@ -280,6 +281,8 @@ class SplineGraphEmbedding:
         self.backbone_paths_ = None
         self.central_junction_locked_ = False
         self.central_junction_center_ = None
+        self.face_cycle_count_ = 0
+        self.hypercube_dimension_ = None
         if self.backbone_initialization == "topological":
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
             self.backbone_paths_ = backbone_paths
@@ -497,6 +500,17 @@ class SplineGraphEmbedding:
             junctions, endpoints = [], []
             branch_counts = np.empty(0, dtype=int)
             branch_confidence = np.empty(0, dtype=float)
+        hypercube_junctions_detected = False
+        if self.detect_junctions and not self.linear_structure_:
+            hypercube_junctions, face_count, hypercube_dimension = (
+                _hypercube_junction_regions(points, self.local_scale_)
+            )
+            if hypercube_junctions:
+                junctions = hypercube_junctions
+                endpoints = []
+                hypercube_junctions_detected = True
+                self.face_cycle_count_ = face_count
+                self.hypercube_dimension_ = hypercube_dimension
         if (
             not junctions
             and not self.linear_structure_
@@ -605,6 +619,7 @@ class SplineGraphEmbedding:
             self.linear_structure_
             or not self.detect_junctions
             or central_junction_locked
+            or hypercube_junctions_detected
             or (
                 len(routing_components) > 1
                 and sum(component_cycle_counts) >= len(routing_components)
@@ -1041,7 +1056,11 @@ class SplineGraphEmbedding:
                         directions = self.junction_branch_directions_.get(
                             target_spec["region"].node_id, np.empty((0, points.shape[1]))
                         )
-                        vector = points[target_vertex] - points[path[-2]]
+                        # Orient the incoming edge from the target junction
+                        # back into the arm.  Comparing the opposite vector
+                        # makes the departure-angle test use the same
+                        # outward convention as the source-junction test.
+                        vector = points[path[-2]] - points[target_vertex]
                         if len(directions):
                             scores = [_departure_angle(direction, vector) for direction in directions]
                             branch_end = int(np.argmin(scores))

@@ -12,10 +12,21 @@ from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding.datasets import generate_synthetic_datasets
 
 
-def run(output_dir: str | Path = "outputs", n: int = 500, noise: float = 0.045, random_state: int = 0) -> list[dict[str, object]]:
+def run(
+    output_dir: str | Path = "outputs",
+    n: int = 500,
+    noise: float = 0.045,
+    random_state: int = 0,
+    binary_tree_depth: int = 3,
+) -> list[dict[str, object]]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    datasets = generate_synthetic_datasets(n=n, noise=noise, random_state=random_state)
+    datasets = generate_synthetic_datasets(
+        n=n,
+        noise=noise,
+        random_state=random_state,
+        binary_tree_depth=binary_tree_depth,
+    )
     rows: list[dict[str, object]] = []
     for index, (name, points) in enumerate(datasets.items()):
         model = SplineGraphEmbedding(
@@ -65,8 +76,15 @@ def main() -> None:
     parser.add_argument("--n", type=int, default=500)
     parser.add_argument("--noise", type=float, default=0.045)
     parser.add_argument("--random-state", type=int, default=0)
+    parser.add_argument("--binary-tree-depth", type=int, default=3)
     args = parser.parse_args()
-    run(args.output_dir, n=args.n, noise=args.noise, random_state=args.random_state)
+    run(
+        args.output_dir,
+        n=args.n,
+        noise=args.noise,
+        random_state=args.random_state,
+        binary_tree_depth=args.binary_tree_depth,
+    )
 
 
 if __name__ == "__main__":
