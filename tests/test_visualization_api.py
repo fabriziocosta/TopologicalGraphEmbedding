@@ -14,6 +14,7 @@ from topological_graph_embedding.visualization.plots import (
     route_colors,
 )
 from topological_graph_embedding.visualization.reduction import fit_reducer
+from topological_graph_embedding.visualization.workflows.synthetic import fit_datasets
 
 
 def test_metro_layout_consumes_embedding_result():
@@ -26,7 +27,30 @@ def test_metro_layout_consumes_embedding_result():
     assert layout.transform_points_3d(result).shape == (len(points), 3)
     for node, radius in layout.junction_radii_.items():
         center = layout.station_positions_[node]
-        assert np.all(np.linalg.norm(displayed - center, axis=1) >= radius)
+    assert np.all(np.linalg.norm(displayed - center, axis=1) >= radius)
+
+
+def test_binary_tree_workflow_keeps_the_fitted_graph_acyclic():
+    points = generate_synthetic_datasets(
+        n=1000,
+        noise=0.045,
+        random_state=0,
+        binary_tree_depth=3,
+    )["binary-tree"]
+    models, _, summary = fit_datasets(
+        {"binary-tree": points},
+        n_centroids=32,
+        persistence_threshold=4.0,
+        persistence_max_points=60,
+        spline_smoothing=0.005,
+        max_cycles=5,
+    )
+
+    model = models["binary-tree"]
+    assert summary[0]["cycles"] == 0
+    assert model.backbone_initialization == "coarsen"
+    assert model.n_centroids == 64
+    assert all(not route.closed for route in model.routes_)
 
 
 def test_plot_network_uses_public_name():

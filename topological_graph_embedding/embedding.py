@@ -1177,7 +1177,13 @@ class SplineGraphEmbedding:
                         branch_end=axis,
                     )
                 )
-            if len(cube_candidates) == len(specifications) * 3 // 2:
+            # A d-dimensional hypercube has d * 2**(d - 1) edges.  The
+            # previous 3/2 shortcut only works for a three-dimensional cube
+            # and silently discarded the specialized candidates for the
+            # four-dimensional default notebook example.
+            cube_dimension = int(hypercube_dimension or 0)
+            expected_cube_edges = len(specifications) * cube_dimension // 2
+            if cube_dimension >= 3 and len(cube_candidates) == expected_cube_edges:
                 candidates = cube_candidates
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self.candidate_paths_ = list(candidates)

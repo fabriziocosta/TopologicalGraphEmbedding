@@ -192,12 +192,13 @@ def display_interactive_viewer(
             else threshold_slider.value
         )
         merge_distance = None if merge_slider.value == 0 else merge_slider.value
+        is_binary_tree = name == "binary-tree"
         model = SplineGraphEmbedding(
-            backbone_initialization="topological",
-            n_centroids=centroid_slider.value,
+            backbone_initialization="coarsen" if is_binary_tree else "topological",
+            n_centroids=max(centroid_slider.value, 64) if is_binary_tree else centroid_slider.value,
             persistence_threshold=threshold,
             spline_smoothing=smoothing_slider.value,
-            max_cycles=cycles_slider.value,
+            max_cycles=0 if is_binary_tree else cycles_slider.value,
             persistence_max_points=default_persistence_max_points,
             random_state=random_state,
             merge_junction_distance=merge_distance,

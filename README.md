@@ -51,14 +51,17 @@ initializer. With `backbone_initialization="topological"`, the dense weighted
 observation kNN graph is treated as a routing substrate and the backbone is
 selected from explicit topology and connectivity constraints:
 
-The repository’s notebook workflows explicitly select
+Most repository notebook workflows explicitly select
 `backbone_initialization="topological"` so their figures and summaries use the
-topology-aware initializer. The library default remains `"coarsen"` for
-backward compatibility; select the notebook behavior directly in application
-code when needed. The synthetic notebook runs the six easy examples with
-`persistence_max_points=60` and puts the polygon/hypercube examples in a
-separate cell using cap `300` and normalized H1 threshold `4.0`. Electrical
-resistance/current terms are opt-in, not part of the notebook default.
+topology-aware initializer. The synthetic binary-tree example is the
+exception: it uses the cycle-free coarsening path so noise between nearby
+branches is not promoted to spurious loops. The library default remains
+`"coarsen"` for backward compatibility; select the notebook behavior directly
+in application code when needed. The synthetic notebook runs the six easy
+examples with `persistence_max_points=60` and puts the polygon/hypercube
+examples in a separate cell using cap `300` and normalized H1 threshold `4.0`.
+Electrical resistance/current terms are opt-in, not part of the notebook
+default.
 
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.

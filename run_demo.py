@@ -31,11 +31,12 @@ def run(
     )
     rows: list[dict[str, object]] = []
     for index, (name, points) in enumerate(datasets.items()):
+        is_binary_tree = name == "binary-tree"
         model = SplineGraphEmbedding(
-            n_centroids=32,
+            n_centroids=64 if is_binary_tree else 32,
             persistence_threshold=None,
             spline_smoothing=0.02,
-            max_cycles=5,
+            max_cycles=0 if is_binary_tree else 5,
             random_state=random_state + index,
             merge_junction_distance=None,
         )

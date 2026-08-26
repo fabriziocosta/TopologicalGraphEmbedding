@@ -57,13 +57,14 @@ def fit_datasets(
     summary = []
 
     for index, (name, points) in enumerate(datasets.items()):
+        is_binary_tree = name == 'binary-tree'
         model = SplineGraphEmbedding(
-            backbone_initialization="topological",
-            n_centroids=n_centroids,
+            backbone_initialization="coarsen" if is_binary_tree else "topological",
+            n_centroids=max(n_centroids, 64) if is_binary_tree else n_centroids,
             persistence_threshold=persistence_threshold,
             persistence_max_points=persistence_max_points,
             spline_smoothing=spline_smoothing,
-            max_cycles=max_cycles,
+            max_cycles=0 if is_binary_tree else max_cycles,
             random_state=index,
         )
         with warnings.catch_warnings():

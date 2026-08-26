@@ -19,7 +19,9 @@ direct estimator use still exposes that diagnostic normally.
 
 The synthetic notebook separates the six easy examples from the
 polygon-with-circles and hypercube examples into independent plotting cells.
-The easy cell uses `persistence_max_points=60`; the complex cell uses `300`
+The binary-tree example uses the cycle-free coarsening path with additional
+landmarks so noisy branches are not mistaken for loops. The easy cell uses
+`persistence_max_points=60`; the complex cell uses `300`
 with normalized H1 threshold `4.0`. Run the complex cell only when its higher
 topological resolution is needed. Electrical resistance and current terms
 remain disabled unless explicitly requested.
@@ -58,9 +60,16 @@ cell labels during fitting, denoises the graph-fitting space with 50 PCA
 components, and shows PCA, intrinsic graph coordinates, the fitted spline
 graph, broad lineages, and marker-expression panels.
 
+`interactive_knn_coarsening.ipynb` provides a focused graph-coarsening view:
+select one of the 2D synthetic datasets, inspect its light observation-level
+kNN graph, adjust the base k, and use the coarsened k-means slider to see the
+centroid graph with edges induced by the selected kNN connections.
+
 Launch it from the repository root with:
 
 ```bash
+jupyter notebook notebooks/interactive_knn_coarsening.ipynb
+# or
 jupyter notebook notebooks/visualize_synthetic_distributions.ipynb
 ```
 
