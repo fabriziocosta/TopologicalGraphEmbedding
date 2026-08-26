@@ -55,7 +55,7 @@ The repository’s notebook workflows explicitly select
 `backbone_initialization="topological"` so their figures and summaries use the
 topology-aware initializer. The library default remains `"coarsen"` for
 backward compatibility; select the notebook behavior directly in application
-code when needed. The synthetic notebook runs the seven easy examples with
+code when needed. The synthetic notebook runs the six easy examples with
 `persistence_max_points=60` and puts the polygon/hypercube examples in a
 separate cell using cap `300` and normalized H1 threshold `4.0`. Electrical
 resistance/current terms are opt-in, not part of the notebook default.
@@ -137,7 +137,7 @@ The repository also contains a command-line demo:
 python run_demo.py --output-dir outputs
 ```
 
-It generates synthetic line, binary-tree, loop, figure-eight, and
+It generates synthetic line, star, binary-tree, loop, figure-eight, and
 polygon/radial-circle examples and writes figures plus a CSV summary to
 `outputs/`.
 

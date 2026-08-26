@@ -1,13 +1,14 @@
 # Notebooks
 
-`visualize_synthetic_distributions.ipynb` runs the model on all eight 2D
+`visualize_synthetic_distributions.ipynb` runs the model on seven 2D
 synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
 wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
 (default `4`), the polygon dataset's number of sides by `POLYGON_SIDES`
 (default `5`), and the complete binary tree's root-to-leaf depth by
-`BINARY_TREE_DEPTH` (default `3`). The hypercube is displayed through a 2D
-PCA projection.
+`BINARY_TREE_DEPTH` (default `3`), and the star's branch count by
+`STAR_BRANCHES` (default `4`). The hypercube is displayed through a 2D PCA
+projection.
 
 Notebook workflows use `backbone_initialization="topological"` explicitly.
 This keeps notebook figures on the topology-aware initialization path even
@@ -16,7 +17,7 @@ default. The workflow wrappers also silence the expected constraint-warning
 when a noisy interactive refit cannot realize every requested incidence;
 direct estimator use still exposes that diagnostic normally.
 
-The synthetic notebook separates the seven easy examples from the
+The synthetic notebook separates the six easy examples from the
 polygon-with-circles and hypercube examples into independent plotting cells.
 The easy cell uses `persistence_max_points=60`; the complex cell uses `300`
 with normalized H1 threshold `4.0`. Run the complex cell only when its higher

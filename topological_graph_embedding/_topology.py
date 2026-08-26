@@ -482,7 +482,7 @@ def _hypercube_junction_regions(
                 arm_indices=arms,
             )
         )
-    face_count = (dimension * (dimension - 1) * 2 ** (dimension - 2))
+    face_count = (dimension * (dimension - 1) * 2 ** (dimension - 2)) // 2
     return regions, int(face_count), dimension
 
 

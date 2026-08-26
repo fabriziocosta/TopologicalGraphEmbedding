@@ -45,7 +45,7 @@ def test_embedding_projection_and_normal_coordinates_are_batch_independent():
 
 @pytest.mark.parametrize(
     ("name", "expected_cycles"),
-    [("line", 0), ("y", 0), ("x", 0), ("circle", 1), ("figure-eight", 2), ("loop-branch", 1)],
+    [("line", 0), ("star", 0), ("circle", 1), ("figure-eight", 2), ("loop-branch", 1)],
 )
 def test_synthetic_topology_diagnostics(name, expected_cycles):
     points = generate_synthetic_datasets(n=300, noise=0.03, random_state=0)[name]

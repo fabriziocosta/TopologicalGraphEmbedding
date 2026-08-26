@@ -34,21 +34,29 @@ def noisy_line(n: int = 500, noise: float = 0.045, rng: np.random.Generator | No
     return _add_noise(np.column_stack([t, np.zeros(n)]), noise, rng)
 
 
-def noisy_y(n: int = 500, noise: float = 0.045, rng: np.random.Generator | None = None) -> np.ndarray:
-    rng = np.random.default_rng() if rng is None else rng
-    center = np.array([0.0, 0.0])
-    angles = np.deg2rad([90.0, 210.0, 330.0])
-    segments = [(center, center + 1.25 * np.array([np.cos(angle), np.sin(angle)])) for angle in angles]
-    return _add_noise(_sample_segments(segments, n, rng), noise, rng)
+def noisy_star(
+    n: int = 500,
+    noise: float = 0.045,
+    rng: np.random.Generator | None = None,
+    *,
+    branches: int = 4,
+) -> np.ndarray:
+    """Sample a noisy star with evenly spaced branches."""
+    if isinstance(branches, bool) or not isinstance(branches, (int, np.integer)) or branches < 2:
+        raise ValueError("branches must be an integer of at least 2")
 
-
-def noisy_x(n: int = 500, noise: float = 0.045, rng: np.random.Generator | None = None) -> np.ndarray:
     rng = np.random.default_rng() if rng is None else rng
+    branches = int(branches)
     center = np.zeros(2)
+    angles = np.linspace(
+        0.0,
+        2.0 * np.pi,
+        branches,
+        endpoint=False,
+    )
     segments = [
-        (center, length * np.array([np.cos(angle), np.sin(angle)]))
-        for angle in np.deg2rad([45.0, 135.0, 225.0, 315.0])
-        for length in [1.25]
+        (center, 1.25 * np.array([np.cos(angle), np.sin(angle)]))
+        for angle in angles
     ]
     return _add_noise(_sample_segments(segments, n, rng), noise, rng)
 
@@ -217,8 +225,7 @@ def noisy_hypercube(
 
 SYNTHETIC_DATASETS: dict[str, Callable[..., np.ndarray]] = {
     "line": noisy_line,
-    "y": noisy_y,
-    "x": noisy_x,
+    "star": noisy_star,
     "circle": noisy_circle,
     "figure-eight": noisy_figure_eight,
     "binary-tree": noisy_binary_tree,
@@ -233,16 +240,29 @@ def generate_synthetic_datasets(
     random_state: int = 0,
     polygon_sides: int = 5,
     binary_tree_depth: int = 3,
+    star_branches: int = 4,
 ) -> dict[str, np.ndarray]:
-    """Generate all eight benchmark point clouds with independent seeds.
+    """Generate all seven benchmark point clouds with independent seeds.
 
     ``polygon_sides`` controls the regular polygon in the
     ``"polygon-rays-circles"`` dataset, and ``binary_tree_depth`` controls
-    the root-to-leaf depth of the ``"binary-tree"`` dataset.
+    the root-to-leaf depth of the ``"binary-tree"`` dataset.  ``star_branches``
+    controls the number of evenly spaced rays in the ``"star"`` dataset.
     """
     result = {}
+    # Keep unchanged datasets on their previous random streams even though
+    # the two fixed-ray examples were consolidated into ``star``.
+    seed_offsets = {
+        "line": 0,
+        "star": 1,
+        "circle": 3,
+        "figure-eight": 4,
+        "binary-tree": 5,
+        "loop-branch": 6,
+        "polygon-rays-circles": 7,
+    }
     for offset, (name, factory) in enumerate(SYNTHETIC_DATASETS.items()):
-        rng = np.random.default_rng(random_state + offset)
+        rng = np.random.default_rng(random_state + seed_offsets.get(name, offset))
         if name == "polygon-rays-circles":
             result[name] = factory(
                 n=n,
@@ -257,6 +277,13 @@ def generate_synthetic_datasets(
                 rng=rng,
                 depth=binary_tree_depth,
             )
+        elif name == "star":
+            result[name] = factory(
+                n=n,
+                noise=noise,
+                rng=rng,
+                branches=star_branches,
+            )
         else:
             result[name] = factory(n=n, noise=noise, rng=rng)
     return result
@@ -268,4 +295,5 @@ __all__ = [
     "noisy_binary_tree",
     "noisy_hypercube",
     "noisy_polygon_rays_circles",
+    "noisy_star",
 ]

@@ -17,7 +17,7 @@ from topological_graph_embedding.visualization.reduction import fit_reducer
 
 
 def test_metro_layout_consumes_embedding_result():
-    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["y"]
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
     model = SplineGraphEmbedding(n_centroids=12, random_state=0).fit(points)
     result = model.transform(points)
     layout = MetroLayout(model, random_state=0).fit(result)
@@ -38,7 +38,7 @@ def test_plot_network_uses_public_name():
 
 
 def test_plot_embedding_row_ignores_unresolved_station_ids():
-    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["y"]
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
     model = SplineGraphEmbedding(
         backbone_initialization="topological", n_centroids=12, random_state=0,
     ).fit(points)
@@ -55,7 +55,7 @@ def test_plot_embedding_row_ignores_unresolved_station_ids():
 
 
 def test_metro_points_use_classes_or_route_ids_as_the_sole_color_source():
-    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["y"]
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
     model = SplineGraphEmbedding(n_centroids=12, random_state=0).fit(points)
     result = model.transform(points)
 
@@ -94,7 +94,7 @@ def test_metro_points_use_classes_or_route_ids_as_the_sole_color_source():
 
 
 def test_classical_mds_reducer_supports_out_of_sample_transform():
-    points = generate_synthetic_datasets(n=80, noise=0.03, random_state=2)["y"]
+    points = generate_synthetic_datasets(n=80, noise=0.03, random_state=2)["star"]
     points = np.column_stack([points, points[:, 0] ** 2])
     reducer = fit_reducer(points, method="mds", random_state=0)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import heapq
 import warnings
 from collections.abc import Sequence
-from itertools import pairwise
+from itertools import combinations, pairwise
 from typing import Any
 
 import numpy as np
@@ -855,6 +855,11 @@ class SplineGraphEmbedding:
                 anchor_vertices.extend(selected_component)
         else:
             anchor_vertices = _cycle_anchor_vertices(routing_graph, cycle_target)
+        if hypercube_junctions_detected:
+            # The eight cube corners already provide the complete logical
+            # vertex set.  Adding persistence anchors between them would
+            # obscure the face/edge structure with support landmarks.
+            anchor_vertices = []
         for vertex in anchor_vertices:
             if any(
                 np.linalg.norm(points[vertex] - points[other]) <= max(self.local_scale_, 1e-8)
@@ -1056,11 +1061,7 @@ class SplineGraphEmbedding:
                         directions = self.junction_branch_directions_.get(
                             target_spec["region"].node_id, np.empty((0, points.shape[1]))
                         )
-                        # Orient the incoming edge from the target junction
-                        # back into the arm.  Comparing the opposite vector
-                        # makes the departure-angle test use the same
-                        # outward convention as the source-junction test.
-                        vector = points[path[-2]] - points[target_vertex]
+                        vector = points[target_vertex] - points[path[-2]]
                         if len(directions):
                             scores = [_departure_angle(direction, vector) for direction in directions]
                             branch_end = int(np.argmin(scores))
@@ -1122,6 +1123,62 @@ class SplineGraphEmbedding:
                     candidate_attempts.append((left, right, required_branch, path is not None))
                     if path is not None:
                         candidates.append(path)
+        if hypercube_junctions_detected:
+            # The dense kNN graph can jump from one cube edge to another near
+            # a noisy corner.  For a verified hypercube, order observations on
+            # each Hamming-one edge directly.  This retains the observed edge
+            # geometry while keeping the eight corners at degree three.
+            cube_candidates: list[CandidatePath] = []
+            fixed_tolerance = max(0.35, 12.0 * self.local_scale_)
+            for left, right in combinations(
+                range(len(specifications)), 2,
+            ):
+                left_sign = np.sign(specifications[left]["center"])
+                right_sign = np.sign(specifications[right]["center"])
+                changed = np.flatnonzero(left_sign != right_sign)
+                if len(changed) != 1:
+                    continue
+                axis = int(changed[0])
+                fixed = np.ones(points.shape[1], dtype=bool)
+                fixed[axis] = False
+                displacement = np.abs(
+                    points[:, fixed] - specifications[left]["center"][fixed]
+                )
+                valid = np.all(displacement <= fixed_tolerance, axis=1)
+                vertices = np.flatnonzero(valid).astype(int)
+                if len(vertices) < 4:
+                    continue
+                coordinate = points[vertices, axis]
+                if specifications[left]["center"][axis] > specifications[right]["center"][axis]:
+                    order = np.argsort(-coordinate, kind="mergesort")
+                else:
+                    order = np.argsort(coordinate, kind="mergesort")
+                vertices = vertices[order].tolist()
+                source = int(specifications[left]["vertex"])
+                target = int(specifications[right]["vertex"])
+                vertices = [source] + [vertex for vertex in vertices if vertex not in {source, target}] + [target]
+                length = float(sum(
+                    np.linalg.norm(points[a] - points[b])
+                    for a, b in pairwise(vertices)
+                ))
+                tangent_cost = float(sum(
+                    _tangent_inconsistency(self.local_tangents_[a], self.local_tangents_[b])
+                    for a, b in pairwise(vertices)
+                ))
+                cube_candidates.append(
+                    CandidatePath(
+                        left,
+                        right,
+                        vertices,
+                        length / max(reference_length, 1e-12) + tangent_cost,
+                        length,
+                        tangent_cost,
+                        branch_start=axis,
+                        branch_end=axis,
+                    )
+                )
+            if len(cube_candidates) == len(specifications) * 3 // 2:
+                candidates = cube_candidates
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self.candidate_paths_ = list(candidates)
         self.candidate_path_attempts_ = candidate_attempts

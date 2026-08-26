@@ -23,6 +23,7 @@ def build_datasets(
     random_state=0,
     polygon_sides=5,
     binary_tree_depth=3,
+    star_branches=4,
 ):
     """Build the 2D synthetic datasets and the noisy hypercube dataset."""
     datasets = generate_synthetic_datasets(
@@ -31,6 +32,7 @@ def build_datasets(
         random_state=random_state,
         polygon_sides=polygon_sides,
         binary_tree_depth=binary_tree_depth,
+        star_branches=star_branches,
     )
     datasets['hypercube'] = noisy_hypercube(
         n=n,
@@ -80,6 +82,7 @@ def fit_datasets(
         summary.append({
             'dataset': name,
             'cycles': model.realized_cycle_count_,
+            'face_cycles': getattr(model, 'face_cycle_count_', 0),
             'junctions': len(model.junctions_),
             'endpoints': len(model.endpoints_),
             'spline_chains': len(model.routes_),
@@ -89,7 +92,10 @@ def fit_datasets(
 
 
 def _plot_summary(summary, figure_dir, filename='summary_table.png'):
-    columns = ['dataset', 'cycles', 'junctions', 'endpoints', 'spline_chains', 'median_residual']
+    columns = [
+        'dataset', 'cycles', 'face_cycles', 'junctions', 'endpoints',
+        'spline_chains', 'median_residual',
+    ]
     table_values = [[
         f'{row[column]:.4f}' if column == 'median_residual' else row[column]
         for column in columns
@@ -118,6 +124,7 @@ def run_static_demo(
     metro_residual_width=0.02,
     polygon_sides=5,
     binary_tree_depth=3,
+    star_branches=4,
     persistence_max_points=300,
 ):
     """Build, fit, plot, and summarize all static synthetic datasets."""
@@ -129,6 +136,7 @@ def run_static_demo(
         hypercube_noise,
         polygon_sides=polygon_sides,
         binary_tree_depth=binary_tree_depth,
+        star_branches=star_branches,
     )
     models, projections, summary = fit_datasets(
         datasets,

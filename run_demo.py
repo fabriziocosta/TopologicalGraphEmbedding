@@ -18,6 +18,7 @@ def run(
     noise: float = 0.045,
     random_state: int = 0,
     binary_tree_depth: int = 3,
+    star_branches: int = 4,
 ) -> list[dict[str, object]]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -26,6 +27,7 @@ def run(
         noise=noise,
         random_state=random_state,
         binary_tree_depth=binary_tree_depth,
+        star_branches=star_branches,
     )
     rows: list[dict[str, object]] = []
     for index, (name, points) in enumerate(datasets.items()):
@@ -77,6 +79,7 @@ def main() -> None:
     parser.add_argument("--noise", type=float, default=0.045)
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--binary-tree-depth", type=int, default=3)
+    parser.add_argument("--star-branches", type=int, default=4)
     args = parser.parse_args()
     run(
         args.output_dir,
@@ -84,6 +87,7 @@ def main() -> None:
         noise=args.noise,
         random_state=args.random_state,
         binary_tree_depth=args.binary_tree_depth,
+        star_branches=args.star_branches,
     )
 
 

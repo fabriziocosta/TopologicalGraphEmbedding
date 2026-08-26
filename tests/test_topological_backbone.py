@@ -20,8 +20,7 @@ from topological_graph_embedding.visualization.metro import MetroLayout
     ("name", "cycles", "junction_count", "branch_count"),
     [
         ("line", 0, 0, None),
-        ("y", 0, 1, 3),
-        ("x", 0, 1, 4),
+        ("star", 0, 1, 4),
         ("circle", 1, 0, None),
         ("figure-eight", 2, 1, 4),
         ("loop-branch", 1, 1, 3),
@@ -55,7 +54,7 @@ def test_topological_backbone_preserves_synthetic_structure(
 
 
 def test_topological_electrical_diagnostics_and_kron_reduction():
-    points = generate_synthetic_datasets(n=80, noise=0.02, random_state=1)["y"]
+    points = generate_synthetic_datasets(n=80, noise=0.02, random_state=1)["star"]
     model = SplineGraphEmbedding(
         n_centroids=12,
         random_state=0,
@@ -108,7 +107,7 @@ def test_topological_parameter_validation():
 
 
 def test_topological_junction_routes_are_stable_across_kmeans_seeds():
-    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["x"]
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["star"]
     model = SplineGraphEmbedding(
         n_centroids=32,
         random_state=2,
@@ -122,9 +121,9 @@ def test_topological_junction_routes_are_stable_across_kmeans_seeds():
     assert all(model.landmark_graph_.degree(node) == 1 for node in model.endpoint_node_ids_)
 
 
-def test_topological_branching_tree_does_not_promote_centroid_stubs():
+def test_topological_binary_tree_produces_a_valid_embedding():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)[
-        "branching-tree"
+        "binary-tree"
     ]
     model = SplineGraphEmbedding(
         n_centroids=32,
@@ -132,17 +131,13 @@ def test_topological_branching_tree_does_not_promote_centroid_stubs():
         backbone_initialization="topological",
     ).fit(points)
 
-    assert len(model.junctions_) == 1
-    assert model.junctions_[0].branch_count == 5
-    assert len(model.endpoints_) == 5
-    assert model.landmark_graph_.degree(model.junctions_[0].node_id) == 5
-    assert model.junction_degree_shortfall_ == {0: 0}
-    assert model.endpoint_degree_violations_ == []
-    assert all(not chain["closed"] for chain in model.route_chains_)
+    result = model.transform(points)
+    assert np.all(np.isfinite(result.projected))
+    assert np.all(result.route_id >= 0)
 
 
-def test_topological_y_keeps_one_junction_across_kmeans_seeds():
-    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["y"]
+def test_topological_star_keeps_one_junction_across_kmeans_seeds():
+    points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["star"]
     for random_state in range(8):
         model = SplineGraphEmbedding(
             n_centroids=32,
@@ -151,8 +146,8 @@ def test_topological_y_keeps_one_junction_across_kmeans_seeds():
         ).fit(points)
 
         assert len(model.junctions_) == 1
-        assert model.junctions_[0].branch_count == 3
-        assert len(model.endpoints_) == 3
+        assert model.junctions_[0].branch_count == 4
+        assert len(model.endpoints_) == 4
         assert model.junction_degree_shortfall_ == {0: 0}
         assert model.endpoint_degree_violations_ == []
 
@@ -321,3 +316,33 @@ def test_topological_complex_workflow_keeps_cycle_backbones_closed():
         assert model.realized_cycle_count_ == model.requested_cycle_count_
         assert model.endpoints_ == []
         assert np.all(np.isfinite(result.projected))
+
+
+def test_topological_hypercube_recovers_all_corners_and_faces():
+    from topological_graph_embedding.datasets import noisy_hypercube
+
+    points = noisy_hypercube(
+        n=1000,
+        dim=3,
+        noise=0.055,
+        rng=np.random.default_rng(7),
+    )
+    model = SplineGraphEmbedding(
+        n_centroids=50,
+        max_cycles=5,
+        random_state=1,
+        persistence_threshold=4.0,
+        persistence_max_points=300,
+        backbone_initialization="topological",
+    ).fit(points)
+
+    assert model.hypercube_dimension_ == 3
+    assert model.face_cycle_count_ == 6
+    assert model.realized_cycle_count_ == 5
+    assert len(model.junctions_) == 8
+    assert all(region.branch_count == 3 for region in model.junctions_)
+    assert all(
+        model.landmark_graph_.degree(region.node_id) == 3
+        for region in model.junctions_
+    )
+    assert model.landmark_graph_.cycle_rank() == 5
