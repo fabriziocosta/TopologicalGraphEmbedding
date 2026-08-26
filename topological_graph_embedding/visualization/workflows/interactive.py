@@ -208,6 +208,11 @@ def display_interactive_viewer(
                 message="Topological landmark constraints could not all be realized by the routing substrate\\.",
                 category=RuntimeWarning,
             )
+            warnings.filterwarnings(
+                "ignore",
+                message="The sparse landmark graph could not realize all requested cycles.*",
+                category=RuntimeWarning,
+            )
             result = model.fit_transform(points)
         model.route_metrics_ = evaluate_route_target(
             model, result, labels, n_splits=10, random_state=random_state,

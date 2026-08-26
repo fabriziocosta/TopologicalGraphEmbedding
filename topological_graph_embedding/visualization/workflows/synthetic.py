@@ -68,6 +68,11 @@ def fit_datasets(
                 message="Topological landmark constraints could not all be realized by the routing substrate\\.",
                 category=RuntimeWarning,
             )
+            warnings.filterwarnings(
+                "ignore",
+                message="The sparse landmark graph could not realize all requested cycles.*",
+                category=RuntimeWarning,
+            )
             models[name] = model.fit(points)
         projections[name] = model.transform(points)
         summary.append({
