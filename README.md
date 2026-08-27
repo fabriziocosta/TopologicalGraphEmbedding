@@ -67,7 +67,9 @@ default.
    features receive unit scale so degenerate inputs remain finite.
 2. **Build the routing substrate.** Topological mode constructs a weighted,
    symmetric observation kNN graph with Euclidean lengths and affinity-based
-   conductances. Disconnected kNN components receive a bridge only for
+   conductances. With `mutual_knn=True`, only reciprocal neighbor pairs are
+   retained. With `add_mst=True`, the exact Euclidean MST is added to the
+   selected kNN edges. Disconnected kNN components receive a bridge only for
    electrical computations; route selection keeps their backbones separate.
    Coarsening mode instead continues with the existing centroid graph.
 3. **Estimate topology and local geometry.** Persistent H1 estimates the
@@ -90,6 +92,12 @@ default.
 
 The topology is deliberately sparse and approximate. Diagnostics on the
 fitted estimator make that approximation visible rather than hiding it.
+
+For a detected $d$-dimensional hypercube, `realized_cycle_count_` is the
+independent cycle rank, not the number of geometric faces. In particular, a
+3D cube has 8 degree-3 junctions, 12 edges, 5 independent cycles, and 6 square
+faces. The latter is reported separately as `face_cycle_count_`, with the
+detected dimension in `hypercube_dimension_`.
 
 ## Installation
 
@@ -185,6 +193,8 @@ The most important estimator parameters are:
 | `max_cycles` | Maximum number of cycles allowed in the fitted graph |
 | `persistence_threshold` | H1 significance threshold; topological mode interprets it in normalized nearest-neighbour units |
 | `topology_neighbors` | Number of local kNN neighbors considered for cycle candidates |
+| `mutual_knn` | Retain an observation edge only when both endpoints select each other; default `False` |
+| `add_mst` | Add the exact Euclidean minimum spanning tree to the routing graph; default `False` |
 | `backbone_initialization` | `coarsen` for the legacy initializer or `topological` for constrained topology-aware routing |
 | `junction_scales` / `junction_inner_fraction` | Multiscale annulus settings for local branch detection |
 | `junction_confidence` | Minimum stable branch-count confidence |
@@ -292,6 +302,9 @@ Useful fitted attributes include:
 - `junctions_` and `endpoints_`: topological regions in topological mode;
 - `branch_counts_`, `branch_confidence_`, `local_tangents_`, and
   `junction_branch_directions_`;
+- `face_cycle_count_` and `hypercube_dimension_` for verified hypercube-like
+  clouds; `junction_degree_shortfall_` and `endpoint_degree_violations_` for
+  constraints that could not be realized;
 - `effective_resistance_`, `edge_leverage_`, `electrical_traffic_`,
   `backbone_graph_`, and `backbone_paths_` in topological mode;
 - `routing_components_`, `component_cycle_counts_`, and `candidate_paths_`;

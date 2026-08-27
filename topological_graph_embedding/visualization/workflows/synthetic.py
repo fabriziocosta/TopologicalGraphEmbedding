@@ -18,7 +18,7 @@ from topological_graph_embedding.visualization.plots import plot_embedding_row
 def build_datasets(
     n=500,
     noise=0.045,
-    hypercube_dim=4,
+    hypercube_dim=3,
     hypercube_noise=0.055,
     random_state=0,
     polygon_sides=5,
@@ -114,7 +114,7 @@ def _plot_summary(summary, figure_dir, filename='summary_table.png'):
 
 def run_static_demo(
     project_root='.',
-    hypercube_dim=4,
+    hypercube_dim=3,
     n=500,
     noise=0.045,
     hypercube_noise=0.055,

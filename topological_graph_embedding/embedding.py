@@ -108,6 +108,8 @@ class SplineGraphEmbedding:
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        mutual_knn: bool = False,
+        add_mst: bool = False,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -183,6 +185,8 @@ class SplineGraphEmbedding:
         self.spline_samples_per_node = int(spline_samples_per_node)
         self.linear_structure_tolerance = float(linear_structure_tolerance)
         self.topology_neighbors = int(topology_neighbors)
+        self.mutual_knn = bool(mutual_knn)
+        self.add_mst = bool(add_mst)
         self.backbone_initialization = str(backbone_initialization)
         self.detect_cycles = bool(detect_cycles)
         self.detect_junctions = bool(detect_junctions)
@@ -415,7 +419,10 @@ class SplineGraphEmbedding:
     ) -> tuple[_LandmarkGraph, dict[tuple[int, int], CandidatePath]]:
         """Infer a constrained landmark graph from the dense routing substrate."""
         routing_graph, local_scales = _weighted_symmetric_knn_graph(
-            points, self.topology_neighbors
+            points,
+            self.topology_neighbors,
+            mutual_knn=self.mutual_knn,
+            add_mst=self.add_mst,
         )
         self.routing_graph_ = routing_graph
         self.local_graph_scales_ = local_scales
@@ -1179,8 +1186,8 @@ class SplineGraphEmbedding:
                 )
             # A d-dimensional hypercube has d * 2**(d - 1) edges.  The
             # previous 3/2 shortcut only works for a three-dimensional cube
-            # and silently discarded the specialized candidates for the
-            # four-dimensional default notebook example.
+            # and silently discarded the specialized candidates for a
+            # configured four-dimensional hypercube.
             cube_dimension = int(hypercube_dimension or 0)
             expected_cube_edges = len(specifications) * cube_dimension // 2
             if cube_dimension >= 3 and len(cube_candidates) == expected_cube_edges:

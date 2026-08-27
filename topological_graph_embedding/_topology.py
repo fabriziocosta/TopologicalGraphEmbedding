@@ -169,8 +169,54 @@ def _standardize(X: Array) -> tuple[Array, Array, Array]:
     return (X - mean) / scale, mean, scale
 
 
-def _weighted_symmetric_knn_graph(X: Array, neighbors: int) -> tuple[_WeightedKNNGraph, Array]:
-    """Build a weighted symmetric kNN graph over the observations.
+def _euclidean_mst_edges(points: Array) -> tuple[Array, Array]:
+    """Return the exact Euclidean MST using a memory-linear Prim pass."""
+    points = np.asarray(points, dtype=float)
+    if len(points) < 2:
+        return np.empty((0, 2), dtype=int), np.empty(0, dtype=float)
+
+    selected = np.zeros(len(points), dtype=bool)
+    best_squared = np.full(len(points), np.inf, dtype=float)
+    parent = np.full(len(points), -1, dtype=int)
+    best_squared[0] = 0.0
+    edges: list[tuple[int, int, float]] = []
+
+    for _ in range(len(points)):
+        available = np.flatnonzero(~selected)
+        current = int(available[np.argmin(best_squared[available])])
+        selected[current] = True
+        if parent[current] >= 0:
+            edges.append((int(parent[current]), current, np.sqrt(best_squared[current])))
+
+        remaining = np.flatnonzero(~selected)
+        if not len(remaining):
+            continue
+        differences = points[remaining] - points[current]
+        distances_squared = np.sum(differences * differences, axis=1)
+        improved = distances_squared < best_squared[remaining]
+        improved_indices = remaining[improved]
+        best_squared[improved_indices] = distances_squared[improved]
+        parent[improved_indices] = current
+
+    edge_array = np.asarray([(left, right) for left, right, _ in edges], dtype=int)
+    lengths = np.asarray([length for _, _, length in edges], dtype=float)
+    return edge_array, lengths
+
+
+def _weighted_symmetric_knn_graph(
+    X: Array,
+    neighbors: int,
+    mutual_knn: bool = False,
+    add_mst: bool = False,
+) -> tuple[_WeightedKNNGraph, Array]:
+    """Build a weighted kNN graph, optionally augmented with its Euclidean MST.
+
+    When ``mutual_knn`` is true, an edge is retained only when both endpoints
+    select each other among their local neighbors.  When ``add_mst`` is true,
+    the exact Euclidean minimum spanning tree is added before natural
+    components are recorded.  Disconnected-component bridges are still added
+    after the natural graph is recorded so optional electrical diagnostics
+    retain a connected substrate.
 
     Euclidean lengths are retained for geometry while Gaussian affinities are
     retained as conductances.  A minimum-distance bridge is added between
@@ -198,13 +244,33 @@ def _weighted_symmetric_knn_graph(X: Array, neighbors: int) -> tuple[_WeightedKN
         distances = np.column_stack([np.zeros(len(points)), distances])
         local_scales = np.maximum(distances[:, -1], 1e-8)
 
+    neighbor_sets = None
+    if mutual_knn:
+        neighbor_sets = [
+            {
+                int(target)
+                for target in row
+                if int(target) != source
+            }
+            for source, row in enumerate(indices)
+        ]
+
     for source in range(len(points)):
         for column in range(1, count + 1):
             target = int(indices[source, column])
+            if mutual_knn and source not in neighbor_sets[target]:
+                continue
             distance = float(distances[source, column])
             denominator = max(local_scales[source] * local_scales[target], 1e-12)
             conductance = float(np.exp(-(distance * distance) / denominator))
             graph.add_edge(source, target, distance, conductance)
+
+    if add_mst:
+        mst_edges, mst_lengths = _euclidean_mst_edges(points)
+        for (left, right), distance in zip(mst_edges, mst_lengths):
+            denominator = max(local_scales[left] * local_scales[right], 1e-12)
+            conductance = float(np.exp(-(distance * distance) / denominator))
+            graph.add_edge(int(left), int(right), float(distance), conductance)
 
     components = graph.connected_components()
     # Keep the natural kNN components for topology-aware routing.  A bridge
@@ -1031,6 +1097,8 @@ def estimate_topology(
     min_junction_confidence: float = 0.7,
     junction_scales: int | Sequence[float] = 6,
     topology_neighbors: int = 6,
+    mutual_knn: bool = False,
+    add_mst: bool = False,
     persistence_max_points: int = 60,
     random_state: int = 0,
 ) -> TopologyEstimate:
@@ -1041,7 +1109,12 @@ def estimate_topology(
     fitted graph and routing diagnostics on the estimator.
     """
     points = _as_point_cloud(X)
-    graph, graph_scales = _weighted_symmetric_knn_graph(points, topology_neighbors)
+    graph, graph_scales = _weighted_symmetric_knn_graph(
+        points,
+        topology_neighbors,
+        mutual_knn=mutual_knn,
+        add_mst=add_mst,
+    )
     scale = _local_scale(points)
     diagram, _ = _estimate_persistence(
         points, max_points=persistence_max_points, random_state=random_state

@@ -34,6 +34,8 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        mutual_knn: bool = False,
+        add_mst: bool = False,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -66,6 +68,8 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.spline_samples_per_node = spline_samples_per_node
         self.linear_structure_tolerance = linear_structure_tolerance
         self.topology_neighbors = topology_neighbors
+        self.mutual_knn = mutual_knn
+        self.add_mst = add_mst
         self.backbone_initialization = backbone_initialization
         self.detect_cycles = detect_cycles
         self.detect_junctions = detect_junctions
@@ -100,6 +104,8 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             spline_samples_per_node=self.spline_samples_per_node,
             linear_structure_tolerance=self.linear_structure_tolerance,
             topology_neighbors=self.topology_neighbors,
+            mutual_knn=self.mutual_knn,
+            add_mst=self.add_mst,
             backbone_initialization=self.backbone_initialization,
             detect_cycles=self.detect_cycles,
             detect_junctions=self.detect_junctions,
@@ -202,6 +208,8 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int = 6,
+        mutual_knn: bool = False,
+        add_mst: bool = False,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -235,6 +243,8 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             spline_samples_per_node=spline_samples_per_node,
             linear_structure_tolerance=linear_structure_tolerance,
             topology_neighbors=topology_neighbors,
+            mutual_knn=mutual_knn,
+            add_mst=add_mst,
             backbone_initialization=backbone_initialization,
             detect_cycles=detect_cycles,
             detect_junctions=detect_junctions,

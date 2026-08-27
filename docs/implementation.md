@@ -77,8 +77,12 @@ symmetrized landmark k-nearest-neighbor graph, controlled by
 
 `backbone_initialization="topological"` builds a weighted, symmetric kNN graph
 over the fitting coordinates. Edge lengths supply geometric costs. Affinity
-weights supply conductances for optional electrical diagnostics. The kNN graph
-is a routing substrate, not the final manifold backbone.
+weights supply conductances for optional electrical diagnostics. With
+`mutual_knn=True`, only reciprocal neighbor pairs are retained. The kNN graph
+is a routing substrate, not the final manifold backbone. With `add_mst=True`,
+the exact Euclidean minimum spanning tree is added to the selected kNN edges
+before natural components are recorded. The MST pass uses linear memory but
+quadratic time in the number of observations, so it is an opt-in setting.
 
 If the natural kNN graph is disconnected, a bridge may be added for electrical
 calculations. Route selection still keeps the original components separate.
@@ -132,6 +136,15 @@ a sufficiently long local path. The remaining candidates are ranked by their
 path-to-chord contrast. This limits shortcuts to local landmark neighborhoods
 instead of considering all landmark pairs.
 
+Hypercube-like clouds receive one additional structural diagnostic. For a
+3D cube, `face_cycle_count_` is 6 (the square faces), while
+`realized_cycle_count_` remains 5 (the independent cycle rank
+`E - V + 1`); `hypercube_dimension_` records the detected dimension. The
+specialized candidate routes preserve all eight degree-3 corners when the
+observed arms are supported. Degree and endpoint constraint failures remain
+visible through `junction_degree_shortfall_` and
+`endpoint_degree_violations_`.
+
 The main topology diagnostics are:
 
 | Attribute | Meaning |
@@ -143,6 +156,7 @@ The main topology diagnostics are:
 | `persistence_backend_` | `ripser`, `numpy`, or `numpy-after-ripser-error` |
 | `topology_candidate_edges_` | Symmetrized local kNN candidates |
 | `cycle_count_` | Significant normalized H1 cycle count |
+| `face_cycle_count_` / `hypercube_dimension_` | Geometric face count and dimension for verified hypercube-like clouds |
 | `junction_regions_` / `endpoint_regions_` | Clustered local-geometry regions |
 | `backbone_graph_` / `backbone_paths_` | Selected graph and route supports |
 | `effective_resistance_` / `edge_leverage_` | Optional electrical diagnostics |

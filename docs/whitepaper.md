@@ -112,6 +112,13 @@ used as evidence for cycles. The resulting persistence estimate supplies a
 requested cycle count, but it does not guarantee that the selected graph will
 realize that count.
 
+For a verified hypercube-like sample, geometric faces are reported separately
+from independent graph cycles. A three-dimensional cube therefore has eight
+degree-three junctions and six square faces, but its graph has cycle rank five
+because $E-V+1=12-8+1$. The estimator exposes the face count as
+`face_cycle_count_` and keeps `realized_cycle_count_` as the graph-theoretic
+rank.
+
 Optional electrical diagnostics use a conductance Laplacian to compute
 effective resistance, edge leverage, and aggregate current support. These
 quantities provide additional connectivity evidence; they do not define the

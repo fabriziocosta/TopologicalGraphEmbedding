@@ -1,10 +1,11 @@
 # Notebooks
 
 `visualize_synthetic_distributions.ipynb` runs the model on seven 2D
-synthetic distributions plus a noisy 4D hypercube. The notebook is a thin
+synthetic distributions (six easy and one complex) plus a noisy 3D hypercube.
+The notebook is a thin
 wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
-(default `4`), the polygon dataset's number of sides by `POLYGON_SIDES`
+(default `3`), the polygon dataset's number of sides by `POLYGON_SIDES`
 (default `5`), and the complete binary tree's root-to-leaf depth by
 `BINARY_TREE_DEPTH` (default `3`), and the star's branch count by
 `STAR_BRANCHES` (default `4`). The hypercube is displayed through a 2D PCA
@@ -63,7 +64,8 @@ graph, broad lineages, and marker-expression panels.
 `interactive_knn_coarsening.ipynb` provides a focused graph-coarsening view:
 select one of the 2D synthetic datasets, inspect its light observation-level
 kNN graph, adjust the base k, and use the coarsened k-means slider to see the
-centroid graph with edges induced by the selected kNN connections.
+centroid graph with edges induced by the selected kNN connections. It also
+includes switches for mutual nearest neighbors and adding the Euclidean MST.
 
 Launch it from the repository root with:
 

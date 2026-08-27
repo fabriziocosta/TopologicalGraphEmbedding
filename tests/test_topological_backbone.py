@@ -85,16 +85,39 @@ def test_electrical_path_resistance_and_kron_shape():
     assert np.allclose(reduced, reduced.T)
 
 
+def test_mutual_knn_retains_only_reciprocal_natural_edges():
+    points = np.array([[0.0], [1.0], [3.0], [10.0]])
+    symmetric, _ = _weighted_symmetric_knn_graph(points, neighbors=1)
+    mutual, _ = _weighted_symmetric_knn_graph(points, neighbors=1, mutual_knn=True)
+
+    assert len(symmetric.original_components) == 1
+    assert sorted(map(len, mutual.original_components)) == [1, 1, 2]
+
+
+def test_mst_flag_augments_mutual_knn_edges_before_component_recording():
+    points = np.array([[0.0], [1.0], [3.0], [10.0]])
+    graph, _ = _weighted_symmetric_knn_graph(
+        points, neighbors=1, mutual_knn=True, add_mst=True,
+    )
+
+    assert len(graph.original_components) == 1
+    assert len(graph.edges) == len(points) - 1
+
+
 def test_topological_parameters_propagate_through_sklearn_adapter():
     estimator = SplineEmbeddingTransformer(
         backbone_initialization="topological",
         junction_scales=[1.0, 2.0, 3.0],
         use_effective_resistance=True,
+        mutual_knn=True,
+        add_mst=True,
     )
     cloned = clone(estimator)
     assert cloned.get_params()["backbone_initialization"] == "topological"
     assert cloned.get_params()["junction_scales"] == [1.0, 2.0, 3.0]
     assert cloned.get_params()["use_effective_resistance"] is True
+    assert cloned.get_params()["mutual_knn"] is True
+    assert cloned.get_params()["add_mst"] is True
 
 
 def test_topological_parameter_validation():
