@@ -99,6 +99,7 @@ class SplineGraphEmbedding:
         n_centroids: int = 32,
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
+        spline_control_mode: str = "support",
         max_cycles: int = 5,
         random_state: int = 0,
         standardize: bool = True,
@@ -155,6 +156,8 @@ class SplineGraphEmbedding:
             raise ValueError("residual_subspace_smoothness must be finite and non-negative")
         if backbone_initialization not in {"coarsen", "topological"}:
             raise ValueError("backbone_initialization must be 'coarsen' or 'topological'")
+        if spline_control_mode not in {"support", "backbone"}:
+            raise ValueError("spline_control_mode must be 'support' or 'backbone'")
         if local_pca_neighbors < 2:
             raise ValueError("local_pca_neighbors must be at least 2")
         if not 0.0 < junction_inner_fraction < 1.0:
@@ -189,6 +192,7 @@ class SplineGraphEmbedding:
         self.n_centroids = int(n_centroids)
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = float(spline_smoothing)
+        self.spline_control_mode = str(spline_control_mode)
         self.max_cycles = int(max_cycles)
         self.random_state = int(random_state)
         self.standardize = bool(standardize)
@@ -409,17 +413,30 @@ class SplineGraphEmbedding:
                     self.linear_center_
                     + coordinates[:, None] * self.linear_direction_
                 )
+            if self.spline_control_mode == "backbone":
+                spline_points = np.asarray(chain["points"], dtype=float).copy()
+                spline_weights = np.ones(len(spline_points), dtype=float)
+                for node in chain["nodes"]:
+                    landmark = np.asarray(self.landmark_graph_.nodes[node], dtype=float)
+                    anchor = int(np.argmin(np.sum((spline_points - landmark) ** 2, axis=1)))
+                    spline_points[anchor] = landmark
+                    spline_weights[anchor] = 100.0
+                chain["spline_points"] = spline_points
+                chain["spline_weights"] = spline_weights
+            else:
+                chain["spline_points"] = np.asarray(chain["points"], dtype=float)
         self.routes_ = []
         for chain in self.route_chains_:
             start_tangent, end_tangent = self._chain_boundary_tangents(chain)
             self.routes_.append(
                 _fit_curve(
-                    chain["points"],
+                    chain.get("spline_points", chain["points"]),
                     closed=chain["closed"],
                     smoothing=self.spline_smoothing,
                     sample_count=max(64, len(chain["nodes"]) * self.spline_samples_per_node),
                     start_tangent=start_tangent,
                     end_tangent=end_tangent,
+                    weights=chain.get("spline_weights"),
                 )
             )
         self._anchor_closed_junctions()

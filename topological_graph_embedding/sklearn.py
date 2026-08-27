@@ -24,6 +24,7 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         n_centroids: int = 32,
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
+        spline_control_mode: str = "support",
         max_cycles: int = 5,
         random_state: int = 0,
         standardize: bool = True,
@@ -61,6 +62,7 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.n_centroids = n_centroids
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = spline_smoothing
+        self.spline_control_mode = spline_control_mode
         self.max_cycles = max_cycles
         self.random_state = random_state
         self.standardize = standardize
@@ -100,6 +102,7 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             n_centroids=self.n_centroids,
             persistence_threshold=self.persistence_threshold,
             spline_smoothing=self.spline_smoothing,
+            spline_control_mode=self.spline_control_mode,
             max_cycles=self.max_cycles,
             random_state=self.random_state,
             standardize=self.standardize,
@@ -216,6 +219,7 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         n_centroids: int = 32,
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
+        spline_control_mode: str = "support",
         max_cycles: int = 5,
         random_state: int = 0,
         standardize: bool = True,
@@ -254,6 +258,7 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
+            spline_control_mode=spline_control_mode,
             max_cycles=max_cycles,
             random_state=random_state,
             standardize=standardize,

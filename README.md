@@ -236,6 +236,7 @@ The most important estimator parameters are:
 | `routing_*_weight` | Relative length, tangent, density, resistance, and current costs |
 | `use_tangent_boundary_conditions` | Add PCA-aligned virtual spline control points at open route boundaries |
 | `spline_smoothing` | Smoothing strength for route curves |
+| `spline_control_mode` | `support` preserves dense support geometry; `backbone` anchors splines to simplified backbone vertices |
 | `merge_junction_distance` | Distance used to merge nearby graph junctions; `None` selects an automatic value |
 | `prune_short_branches` | Whether very short terminal branches are removed |
 | `standardize` | Whether fitting distances are computed after featurewise standardization |

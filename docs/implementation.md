@@ -174,7 +174,12 @@ Each route chain is represented by a dense sampled curve. SciPy smoothing
 splines are preferred for open and closed chains. If SciPy fitting is
 unavailable or fails numerically, the implementation uses a deterministic
 NumPy Catmull–Rom or polyline fallback. The selected backend for each route is
-stored in `route_backends_`.
+stored in `route_backends_`. `spline_control_mode="support"` fits the dense
+route support path, preserving the historical behavior. The optional
+`"backbone"` mode keeps that ordered support path for geometry but snaps its
+nearest points to the simplified landmark-backbone vertices and gives those
+anchors high fitting weight. This lets smoothing remove observation-level
+zigzags without allowing the spline to drift away from the selected backbone.
 
 Projection is performed in batches. For each route, observations are compared
 with the route's sampled line segments using squared distances. The closest

@@ -169,27 +169,44 @@ def _fit_curve(
     start_tangent: Array | None = None,
     end_tangent: Array | None = None,
     tangent_epsilon: float = 0.05,
+    weights: Array | None = None,
 ) -> _SplineRoute:
     points = np.asarray(points, dtype=float)
+    fit_weights = None if weights is None else np.asarray(weights, dtype=float)
     if closed and len(points) > 1 and np.allclose(points[0], points[-1]):
         points = points[:-1]
+        if fit_weights is not None and len(fit_weights) > len(points):
+            fit_weights = fit_weights[:-1]
     if not closed and len(points) >= 2 and (start_tangent is not None or end_tangent is not None):
         span = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
         epsilon = max(1e-8, float(tangent_epsilon) * span / max(len(points), 2))
         augmented = [points[0]]
+        augmented_weights = None
+        if fit_weights is not None and len(fit_weights) == len(points):
+            augmented_weights = [fit_weights[0]]
         if start_tangent is not None:
             direction = np.asarray(start_tangent, dtype=float)
             norm = float(np.linalg.norm(direction))
             if norm > 1e-12:
                 augmented.append(points[0] + epsilon * direction / norm)
+                if augmented_weights is not None:
+                    augmented_weights.append(fit_weights[0])
         augmented.extend(points[1:-1])
+        if augmented_weights is not None:
+            augmented_weights.extend(fit_weights[1:-1])
         if end_tangent is not None:
             direction = np.asarray(end_tangent, dtype=float)
             norm = float(np.linalg.norm(direction))
             if norm > 1e-12:
                 augmented.append(points[-1] - epsilon * direction / norm)
+                if augmented_weights is not None:
+                    augmented_weights.append(fit_weights[-1])
         augmented.append(points[-1])
+        if augmented_weights is not None:
+            augmented_weights.append(fit_weights[-1])
         points = np.asarray(augmented, dtype=float)
+        if augmented_weights is not None:
+            fit_weights = np.asarray(augmented_weights, dtype=float)
     if len(points) < 2:
         repeated = np.repeat(points, 2, axis=0)
         return _SplineRoute(repeated, np.array([0.0, 1.0]), False, backend="degenerate")
@@ -213,10 +230,12 @@ def _fit_curve(
 
     tck = None
     backend = "numpy"
-    # A large smoothing factor can pull a periodic spline sharply toward its
-    # centroid, changing the loop's topology-preserving geometry.  Closed
-    # routes need only modest denoising; cap the value before FITPACK sees it.
-    fit_smoothing = min(float(smoothing), 0.01) if closed else float(smoothing)
+    # A very large smoothing factor can pull a periodic spline sharply toward
+    # its centroid, changing the loop's topology-preserving geometry. Closed
+    # routes still need access to stronger denoising than the default, so use a
+    # generous safety cap rather than silently limiting them to near-zero
+    # smoothing.
+    fit_smoothing = min(float(smoothing), 0.25) if closed else float(smoothing)
     # FITPACK's parametric spline implementation supports at most ten
     # coordinate dimensions.  High-dimensional embeddings intentionally use
     # the deterministic NumPy fallback without producing one warning per
@@ -239,6 +258,7 @@ def _fit_curve(
                     )
                     tck, _ = splprep(
                         points.T,
+                        w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
                         u=t,
                         s=smoothing_factor,
                         per=closed,
@@ -261,20 +281,72 @@ def _fit_curve(
     count = max(32, int(sample_count))
     sample_t = np.linspace(0.0, 1.0, count, endpoint=not closed)
     if tck is not None and splev is not None:
-        candidate_samples = np.asarray(splev(sample_t, tck)).T
         control_min = np.min(points, axis=0)
         control_max = np.max(points, axis=0)
         control_span = np.maximum(control_max - control_min, 1e-8)
-        sample_span = np.ptp(candidate_samples, axis=0)
         active_dimensions = control_span > 0.1 * np.max(control_span)
-        has_closed_collapse = closed and np.any(
-            sample_span[active_dimensions] < 0.80 * control_span[active_dimensions]
-        )
         margin = np.maximum(0.25 * control_span, 1e-3)
-        has_overshoot = np.any(candidate_samples < control_min - margin) or np.any(
-            candidate_samples > control_max + margin
+        def check_candidate(candidate_tck: Any) -> tuple[Array, bool, bool]:
+            candidate = np.asarray(splev(sample_t, candidate_tck)).T
+            sample_span = np.ptp(candidate, axis=0)
+            # Preserve the broad shape of every active loop dimension. More
+            # aggressive fits are backed off below rather than replaced by
+            # the jagged interpolating fallback.
+            collapsed = closed and np.any(
+                sample_span[active_dimensions] < 0.80 * control_span[active_dimensions]
+            )
+            overshot = np.any(candidate < control_min - margin) or np.any(
+                candidate > control_max + margin
+            )
+            return candidate, bool(collapsed), bool(overshot)
+
+        candidate_samples, has_closed_collapse, has_overshoot = check_candidate(tck)
+        candidate_valid = (
+            np.all(np.isfinite(candidate_samples))
+            and not has_overshoot
+            and not has_closed_collapse
         )
-        if np.all(np.isfinite(candidate_samples)) and not has_overshoot and not has_closed_collapse:
+        if not candidate_valid and closed and fit_smoothing > 0.0:
+            # A highly smoothed periodic fit can collapse one lobe of a
+            # multi-loop route. Back off to the strongest valid smoothing
+            # rather than discarding the spline and falling back to a jagged
+            # interpolating Catmull–Rom path.
+            lower = 0.0
+            upper = fit_smoothing
+            best_tck = None
+            best_samples = None
+            for _ in range(12):
+                trial = 0.5 * (lower + upper)
+                try:
+                    trial_tck, _ = splprep(
+                        points.T,
+                        w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
+                        u=t,
+                        s=max(0.0, trial) * len(points),
+                        per=True,
+                        k=degree,
+                    )
+                    trial_samples, trial_collapse, trial_overshoot = check_candidate(trial_tck)
+                except Exception:  # noqa: BLE001 - invalid trial uses a lower smoothing value
+                    upper = trial
+                    continue
+                if (
+                    np.all(np.isfinite(trial_samples))
+                    and not trial_collapse
+                    and not trial_overshoot
+                ):
+                    lower = trial
+                    best_tck = trial_tck
+                    best_samples = trial_samples
+                else:
+                    upper = trial
+            if best_tck is not None:
+                tck = best_tck
+                candidate_samples = best_samples
+                has_closed_collapse = False
+                has_overshoot = False
+                candidate_valid = True
+        if candidate_valid:
             samples = candidate_samples
         else:
             tck = None
