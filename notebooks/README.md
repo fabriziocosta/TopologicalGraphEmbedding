@@ -66,6 +66,9 @@ select one of the 2D synthetic datasets, inspect its light observation-level
 kNN graph, adjust the base k, and use the coarsened k-means slider to see the
 centroid graph with edges induced by the selected kNN connections. It also
 includes switches for mutual nearest neighbors and adding the Euclidean MST.
+The coarsened k-means slider controls landmark/backbone resolution, while the
+backbone-simplification slider controls how close junctions may be before they
+are merged (in multiples of the dataset's local scale).
 
 Launch it from the repository root with:
 
