@@ -36,6 +36,9 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         topology_neighbors: int = 6,
         mutual_knn: bool = False,
         add_mst: bool = False,
+        max_residual_dim: int = 0,
+        residual_pca_bandwidth: float = 0.1,
+        residual_subspace_smoothness: float = 0.0,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -70,6 +73,9 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.topology_neighbors = topology_neighbors
         self.mutual_knn = mutual_knn
         self.add_mst = add_mst
+        self.max_residual_dim = max_residual_dim
+        self.residual_pca_bandwidth = residual_pca_bandwidth
+        self.residual_subspace_smoothness = residual_subspace_smoothness
         self.backbone_initialization = backbone_initialization
         self.detect_cycles = detect_cycles
         self.detect_junctions = detect_junctions
@@ -106,6 +112,9 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             topology_neighbors=self.topology_neighbors,
             mutual_knn=self.mutual_knn,
             add_mst=self.add_mst,
+            max_residual_dim=self.max_residual_dim,
+            residual_pca_bandwidth=self.residual_pca_bandwidth,
+            residual_subspace_smoothness=self.residual_subspace_smoothness,
             backbone_initialization=self.backbone_initialization,
             detect_cycles=self.detect_cycles,
             detect_junctions=self.detect_junctions,
@@ -152,7 +161,13 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         route_count = len(self.embedding_.routes_)
         names = [f"route_{route}" for route in range(route_count)]
         names.extend(("position", "residual_norm"))
-        names.extend(f"residual_{feature}" for feature in range(self.n_features_in_))
+        if self.embedding_.residual_dim_ > 0:
+            names.extend(
+                f"residual_pca_{feature}"
+                for feature in range(self.embedding_.residual_dim_)
+            )
+        else:
+            names.extend(f"residual_{feature}" for feature in range(self.n_features_in_))
         return np.asarray(names, dtype=object)
 
     def transform_result(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
@@ -168,13 +183,16 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         route_features = np.zeros((len(route_id), route_count), dtype=float)
         valid = (route_id >= 0) & (route_id < route_count)
         route_features[np.arange(len(route_id))[valid], route_id[valid]] = 1.0
-        residual_scaled = result.residual / self.embedding_.scale_
+        if self.embedding_.residual_dim_ > 0:
+            residual_features = result.residual_coordinates
+        else:
+            residual_features = result.residual / self.embedding_.scale_
         return np.hstack(
             (
                 route_features,
                 result.position[:, None],
                 result.residual_norm[:, None],
-                residual_scaled,
+                residual_features,
             )
         )
 
@@ -210,6 +228,9 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         topology_neighbors: int = 6,
         mutual_knn: bool = False,
         add_mst: bool = False,
+        max_residual_dim: int = 0,
+        residual_pca_bandwidth: float = 0.1,
+        residual_subspace_smoothness: float = 0.0,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -245,6 +266,9 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             topology_neighbors=topology_neighbors,
             mutual_knn=mutual_knn,
             add_mst=add_mst,
+            max_residual_dim=max_residual_dim,
+            residual_pca_bandwidth=residual_pca_bandwidth,
+            residual_subspace_smoothness=residual_subspace_smoothness,
             backbone_initialization=backbone_initialization,
             detect_cycles=detect_cycles,
             detect_junctions=detect_junctions,
@@ -280,7 +304,7 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         )
         result = self.transform_result(points)
         route_count = len(self.embedding_.routes_)
-        normal = self.embedding_.normal_coordinates(result)
+        normal = self._classifier_residual_features(result)
         classifier_features = np.hstack((self.transform(points)[:, : route_count + 1], normal))
         self.estimator_.fit(classifier_features, target)
         if hasattr(self.estimator_, "classes_"):
@@ -292,7 +316,12 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         result = self.transform_result(X)
         route_count = len(self.embedding_.routes_)
         route_features = self._features_from_result(result)[:, : route_count + 1]
-        return np.hstack((route_features, self.embedding_.normal_coordinates(result)))
+        return np.hstack((route_features, self._classifier_residual_features(result)))
+
+    def _classifier_residual_features(self, result: EmbeddingResult) -> Array:
+        if self.embedding_.residual_dim_ > 0:
+            return result.residual_coordinates
+        return self.embedding_.normal_coordinates(result)
 
     def predict(self, X: Array | Sequence[Sequence[float]]) -> Array:
         check_is_fitted(self, "estimator_")

@@ -22,6 +22,7 @@ from ._local_geometry import (
     _estimate_local_tangents,
     _tangent_inconsistency,
 )
+from ._residual_pca import attach_residual_pca, fit_residual_pca
 from ._topology import (
     CandidatePath,
     EndpointRegion,
@@ -110,6 +111,9 @@ class SplineGraphEmbedding:
         topology_neighbors: int = 6,
         mutual_knn: bool = False,
         add_mst: bool = False,
+        max_residual_dim: int = 0,
+        residual_pca_bandwidth: float = 0.1,
+        residual_subspace_smoothness: float = 0.0,
         backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
@@ -139,6 +143,14 @@ class SplineGraphEmbedding:
             raise ValueError("spline_samples_per_node must be at least 1")
         if topology_neighbors < 2:
             raise ValueError("topology_neighbors must be at least 2")
+        if isinstance(max_residual_dim, bool) or not isinstance(max_residual_dim, (int, np.integer)):
+            raise TypeError("max_residual_dim must be a non-negative integer")
+        if max_residual_dim < 0:
+            raise ValueError("max_residual_dim must be non-negative")
+        if residual_pca_bandwidth <= 0.0 or not np.isfinite(residual_pca_bandwidth):
+            raise ValueError("residual_pca_bandwidth must be positive and finite")
+        if residual_subspace_smoothness < 0.0 or not np.isfinite(residual_subspace_smoothness):
+            raise ValueError("residual_subspace_smoothness must be finite and non-negative")
         if backbone_initialization not in {"coarsen", "topological"}:
             raise ValueError("backbone_initialization must be 'coarsen' or 'topological'")
         if local_pca_neighbors < 2:
@@ -187,6 +199,9 @@ class SplineGraphEmbedding:
         self.topology_neighbors = int(topology_neighbors)
         self.mutual_knn = bool(mutual_knn)
         self.add_mst = bool(add_mst)
+        self.max_residual_dim = int(max_residual_dim)
+        self.residual_pca_bandwidth = float(residual_pca_bandwidth)
+        self.residual_subspace_smoothness = float(residual_subspace_smoothness)
         self.backbone_initialization = str(backbone_initialization)
         self.detect_cycles = bool(detect_cycles)
         self.detect_junctions = bool(detect_junctions)
@@ -221,6 +236,7 @@ class SplineGraphEmbedding:
             mean = np.zeros(original.shape[1])
             scale = np.ones(original.shape[1])
         self.n_features_in_ = points.shape[1]
+        self.residual_dim_ = min(self.max_residual_dim, max(0, self.n_features_in_ - 1))
         self.mean_ = mean
         self.scale_ = scale
         self._original_X_ = original
@@ -409,6 +425,9 @@ class SplineGraphEmbedding:
         self.normal_frame_grids_ = [
             _fit_normal_frame_grid(spline) for spline in self.routes_
         ]
+        self.splines_ = self.routes_
+        centerline_result = self._project_centerline(original)
+        fit_residual_pca(self, points, centerline_result)
         self._fitted = True
         return self
 
@@ -1724,9 +1743,7 @@ class SplineGraphEmbedding:
         _, left, right, direct = best
         return left, right, direct
 
-    def transform(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
-        if not self._fitted:
-            raise RuntimeError("Call fit before transform")
+    def _project_centerline(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         original = _as_point_cloud(X)
         if original.shape[1] != self.n_features_in_:
             raise ValueError("X has a different number of features than the fitted data")
@@ -1765,6 +1782,16 @@ class SplineGraphEmbedding:
             # they can define the correct high-dimensional normal hyperplane.
             tangent=tangent,
         )
+
+    def transform(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
+        if not self._fitted:
+            raise RuntimeError("Call fit before transform")
+        original = _as_point_cloud(X)
+        if original.shape[1] != self.n_features_in_:
+            raise ValueError("X has a different number of features than the fitted data")
+        points = (original - self.mean_) / self.scale_
+        centerline_result = self._project_centerline(original)
+        return attach_residual_pca(self, original, points, centerline_result)
 
     def fit_transform(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         return self.fit(X).transform(X)
