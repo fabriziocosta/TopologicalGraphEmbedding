@@ -8,7 +8,9 @@ cycles. The method constructs a sparse neighborhood graph, estimates local
 geometric and topological structure, selects a graph backbone, and fits smooth
 routes to its paths. Each observation is then assigned to an approximate
 nearest route coordinate and represented by its route identity, longitudinal
-parameter, projection, local tangent, and off-route residual.
+parameter, projection, local tangent, and off-route residual. An optional
+smooth residual-PCA field adds a fixed number of transverse coordinates and a
+reconstruction error.
 
 Fitting is performed in the original feature space, after an optional affine
 standardization. Dimensionality-reduction methods and the metro-style layout
@@ -174,11 +176,31 @@ with the following field mapping:
 | `residual` | $e_i=x_i-\hat{x}_i$ |
 | `residual_norm` | Euclidean norm $\|e_i\|_2$ |
 | `tangent` | Local unit tangent $v_i$ in fitting coordinates |
+| `residual_coordinates` | Learned transverse coordinates $z_i$ in fitting coordinates |
+| `reconstructed` | $\hat{x}_i + U_i z_i$ in original feature units |
+| `unexplained_residual` | $\epsilon_i=x_i-\mathrm{reconstructed}_i$ in original feature units |
+| `unexplained_residual_norm` | Euclidean norm of $\epsilon_i$ |
 
 The coordinate distinction is intentional. The projection and residual are
 reported in the units of the input data, whereas the tangent is retained in
 fitting coordinates because it defines the local normal geometry used by the
 normal-coordinate transform.
+
+When `max_residual_dim > 0`, the residual is further decomposed as
+
+$$
+x_i \approx \hat{x}_i + U_{r_i}(u_i)z_i + \epsilon_i.
+$$
+
+The basis $U_r(u)$ is learned from Gaussian-weighted second moments of the
+standardized centerline residuals along each route. It is constrained to the
+normal hyperplane of the spline tangent and interpolated from a fixed route
+grid at transformation time. Neighboring projectors are optionally averaged
+for five passes with weight $\lambda/(1+\lambda)$; closed routes use cyclic
+neighbors and share their basis at the seam. The effective dimension is
+$\min(\texttt{max\_residual\_dim},d-1)$. With the default zero dimension, the
+new fields are backfilled so the decomposition reduces exactly to the legacy
+centerline projection and residual.
 
 ## 4. Deterministic normal coordinates
 

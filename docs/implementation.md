@@ -39,6 +39,10 @@ For an observation, `EmbeddingResult` contains:
 | `residual` | `X - projected` in the original feature coordinates |
 | `residual_norm` | Euclidean norm of `residual` |
 | `tangent` | Local unit tangent in fitting coordinates |
+| `residual_coordinates` | Learned local PCA coordinates in fitting units; shape `(n_samples, residual_dim_)` |
+| `reconstructed` | Route projection plus learned residual-PCA reconstruction, in original units |
+| `unexplained_residual` | Original observation minus `reconstructed` |
+| `unexplained_residual_norm` | Euclidean norm of `unexplained_residual` |
 
 The position parameter follows the cumulative length of the fitted support
 points, but it is normalized to $[0,1]$ and should not be interpreted as a
@@ -182,7 +186,39 @@ If no route can be selected for an observation, `transform` raises an explicit
 diagnostic containing the invalid observation count. It does not return a
 sentinel route identifier.
 
-## 6. Deterministic normal frames
+## 6. Residual PCA fields
+
+Residual PCA is optional and is disabled by the compatibility default
+`max_residual_dim=0`. After route projection, training observations are
+assigned to their fitted route and normalized position. Their centerline
+residuals are expressed in standardized fitting coordinates and projected into
+the deterministic route-normal frame. At each route-grid position, a
+Gaussian-weighted second-moment matrix is eigendecomposed and its leading
+`min(max_residual_dim, n_features - 1)` directions are stored as an ambient
+orthonormal basis in `residual_bases_`; the corresponding eigenvalues are in
+`residual_eigenvalues_` and the normalized grids are in
+`residual_parameter_grids_`.
+
+The basis is orthogonal to the spline tangent and is re-orthonormalized after
+interpolation. Neighboring PCA frames are aligned by a Procrustes rotation.
+When `residual_subspace_smoothness > 0`, five fixed passes average neighboring
+projectors with weight `lambda / (1 + lambda)`, including cyclic neighbors for
+closed routes. Transformation uses only these fitted grids, so full-dataset
+and subset transforms are deterministic. The learned coordinates are in
+standardized fitting units; reconstructed and unexplained residual arrays are
+mapped back to original feature units.
+
+The decomposition is
+
+$$
+x = \gamma_r(u) + U_r(u)z + \epsilon,
+$$
+
+where the compatibility fields `projected` and `residual` continue to refer
+to the centerline projection and centerline residual. With zero learned
+dimensions, `reconstructed == projected` and `unexplained_residual == residual`.
+
+## 7. Deterministic normal frames
 
 For a route tangent $v(u)$, normal coordinates use an orthonormal basis of the
 $(d-1)$-dimensional complement of $v(u)$. Building a basis independently from
@@ -211,7 +247,7 @@ normal = model.normal_coordinates(result)
 The returned array has shape `(n_samples, n_features - 1)`. In one dimension,
 it has zero columns.
 
-## 7. Visualization
+## 8. Visualization
 
 Visualization consumes `EmbeddingResult` directly. This keeps route identity,
 position, projection, and residual semantics consistent across views.
@@ -226,7 +262,7 @@ residual magnitude and local residual directions.
 PCA, classical MDS, and UMAP are display reducers. They are not used to fit the
 route network and do not change route assignments or residuals.
 
-## 8. Public interfaces
+## 9. Public interfaces
 
 The core estimator can be used as follows:
 
@@ -244,9 +280,11 @@ result = model.fit_transform(X)
 normal = model.normal_coordinates(result)
 ```
 
-`EmbeddingResult` is a frozen dataclass with six fields:
-`route_id`, `position`, `projected`, `residual`, `residual_norm`, and
-`tangent`. It is attribute-based and does not implement mapping behavior or
+`EmbeddingResult` is a frozen dataclass. In addition to the six compatibility
+fields, it provides `residual_coordinates`, `reconstructed`,
+`unexplained_residual`, and `unexplained_residual_norm`. Legacy six-field
+construction is backfilled with empty coordinates, `projected`, `residual`,
+and its norm. It is attribute-based and does not implement mapping behavior or
 legacy field aliases.
 
 The optional scikit-learn adapters are:
@@ -266,11 +304,13 @@ classifier.fit(X_train, y_train)
 predictions = classifier.predict(X_test)
 ```
 
-The transformer emits route indicators, position, residual norm, and scaled
-residual components. The classifier delegates to a cloned downstream
-estimator using route/position features and deterministic normal coordinates.
+The transformer emits route indicators, position, residual norm, and either
+the legacy scaled residual components or learned `residual_pca_*` components
+when enabled. The classifier delegates to a cloned downstream estimator using
+route/position features and either learned residual-PCA coordinates or the
+legacy deterministic normal coordinates.
 
-## 9. Computational considerations
+## 10. Computational considerations
 
 Let `m` be the number of landmarks, `d` the feature dimension, and `b` the
 distance block size. Landmark k-means forms blocked distance products of size
@@ -291,7 +331,7 @@ When Ripser is unavailable, the pure-NumPy fallback internally caps its sample
 at 120 because its full Rips 2-skeleton is cubic. Effective resistance,
 electrical flow, and their routing weights remain opt-in.
 
-## 10. Reproducibility and limitations
+## 11. Reproducibility and limitations
 
 Randomized stages use `random_state`, including landmark initialization and
 subsampling for capped persistence. Numerical outputs can still depend on the

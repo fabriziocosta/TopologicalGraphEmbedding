@@ -19,7 +19,12 @@ def test_embedding_result_is_frozen_and_attribute_based():
     )
     assert [field.name for field in fields(result)] == [
         "route_id", "position", "projected", "residual", "residual_norm", "tangent",
+        "residual_coordinates", "reconstructed", "unexplained_residual",
+        "unexplained_residual_norm",
     ]
+    assert result.residual_coordinates.shape == (2, 0)
+    assert np.array_equal(result.reconstructed, result.projected)
+    assert np.array_equal(result.unexplained_residual, result.residual)
     with pytest.raises(FrozenInstanceError):
         result.position = np.zeros(2)
     assert not hasattr(result, "__getitem__")

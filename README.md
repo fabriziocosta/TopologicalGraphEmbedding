@@ -32,10 +32,23 @@ The resulting representation separates three kinds of information:
 
 - `route_id` identifies the branch or loop;
 - `position` gives longitudinal position along that route;
-- `residual` and `residual_norm` describe displacement away from the route.
+- `residual` and `residual_norm` describe displacement away from the route;
+- optional residual-PCA coordinates capture leading smooth transverse
+  directions; and
+- `unexplained_residual` contains the remaining reconstruction error.
 
 The public result also contains `projected`, the point on the fitted route,
-and `tangent`, the local route direction. In high-dimensional data, the graph
+and `tangent`, the local route direction. When `max_residual_dim > 0`, the
+learned representation is
+
+$$
+x \approx \gamma_r(u) + U_r(u)z + \epsilon.
+$$
+
+Residual-PCA fields are learned in standardized fitting coordinates, so
+`residual_coordinates` are in those coordinates. `projected`, `reconstructed`,
+`residual`, and `unexplained_residual` remain in the original input units. In
+high-dimensional data, the graph
 is fitted in the original feature space; PCA, classical MDS, or UMAP is used only to display
 that fitted graph.
 
@@ -135,6 +148,11 @@ print("routes:", len(model.routes_))
 print("cycles:", model.realized_cycle_count_)
 print("median residual:", float(np.median(result.residual_norm)))
 
+# Optional smooth transverse coordinates and reconstruction error.
+model = SplineGraphEmbedding(max_residual_dim=2, random_state=0).fit(X)
+result = model.transform(X)
+print(result.residual_coordinates.shape)
+
 # Stable coordinates in the local hyperplane normal to each route.
 normal = model.normal_coordinates(result)
 
@@ -154,7 +172,7 @@ polygon/radial-circle examples and writes figures plus a CSV summary to
 
 ## Interpreting `EmbeddingResult`
 
-`fit_transform` returns a frozen `EmbeddingResult` with six fields:
+`fit_transform` returns a frozen `EmbeddingResult`:
 
 | Field | Meaning |
 | --- | --- |
@@ -164,6 +182,10 @@ polygon/radial-circle examples and writes figures plus a CSV summary to
 | `residual` | `X - projected` in original coordinates |
 | `residual_norm` | Euclidean magnitude of the residual |
 | `tangent` | Local route tangent in standardized fitting coordinates |
+| `residual_coordinates` | Learned local PCA coordinates in standardized fitting coordinates; empty when disabled |
+| `reconstructed` | `projected + U @ residual_coordinates`, in original feature units |
+| `unexplained_residual` | `X - reconstructed`, in original feature units |
+| `unexplained_residual_norm` | Euclidean magnitude of `unexplained_residual` |
 
 The result is attribute-based; it intentionally does not implement dictionary
 indexing or legacy field aliases.
@@ -183,6 +205,13 @@ normal = model.normal_coordinates(result)
 print(normal.shape)  # (n_samples, n_features - 1)
 ```
 
+Set `max_residual_dim` to a positive value to fit a fixed-dimensional,
+Gaussian-weighted PCA field along every route. Neighboring subspaces can be
+regularized with `residual_subspace_smoothness`; `residual_pca_bandwidth`
+controls the Gaussian neighborhood in normalized route position. With the
+default `max_residual_dim=0`, reconstruction equals `projected` and the
+unexplained residual equals the compatibility `residual`.
+
 ## Parameters that control the learned graph
 
 The most important estimator parameters are:
@@ -195,6 +224,9 @@ The most important estimator parameters are:
 | `topology_neighbors` | Number of local kNN neighbors considered for cycle candidates |
 | `mutual_knn` | Retain an observation edge only when both endpoints select each other; default `False` |
 | `add_mst` | Add the exact Euclidean minimum spanning tree to the routing graph; default `False` |
+| `max_residual_dim` | Number of learned transverse residual-PCA coordinates; default `0` |
+| `residual_pca_bandwidth` | Gaussian bandwidth in normalized route position |
+| `residual_subspace_smoothness` | Non-negative neighboring-subspace smoothing strength |
 | `backbone_initialization` | `coarsen` for the legacy initializer or `topological` for constrained topology-aware routing |
 | `junction_scales` / `junction_inner_fraction` | Multiscale annulus settings for local branch detection |
 | `junction_confidence` | Minimum stable branch-count confidence |

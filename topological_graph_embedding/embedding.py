@@ -144,7 +144,9 @@ class SplineGraphEmbedding:
         if topology_neighbors < 2:
             raise ValueError("topology_neighbors must be at least 2")
         if isinstance(max_residual_dim, bool) or not isinstance(max_residual_dim, (int, np.integer)):
-            raise TypeError("max_residual_dim must be a non-negative integer")
+            raise ValueError(  # noqa: TRY004
+                "max_residual_dim must be a non-negative integer"
+            )
         if max_residual_dim < 0:
             raise ValueError("max_residual_dim must be non-negative")
         if residual_pca_bandwidth <= 0.0 or not np.isfinite(residual_pca_bandwidth):
