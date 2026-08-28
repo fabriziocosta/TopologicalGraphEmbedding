@@ -17,9 +17,11 @@ _PLOT_NAMES = (
     "plot_metro_lines",
     "plot_metro_points",
     "plot_projected_graph",
+    "plot_spline_3d",
     "route_colors",
 )
 _PLOT_NAME_SET = set(_PLOT_NAMES)
+_INTERACTIVE_NAME_SET = {"plot_spline_3d"}
 
 __all__ = [
     "MetroLayout",
@@ -33,12 +35,17 @@ __all__ = [
     "plot_metro_lines",
     "plot_metro_points",
     "plot_projected_graph",
+    "plot_spline_3d",
     "route_colors",
 ]
 
 
 def __getattr__(name: str):
     if name in _PLOT_NAME_SET:
+        if name in _INTERACTIVE_NAME_SET:
+            from . import interactive
+
+            return getattr(interactive, name)
         from . import plots
 
         return getattr(plots, name)

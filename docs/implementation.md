@@ -259,10 +259,18 @@ position, projection, and residual semantics consistent across views.
 
 `plot_network` shows the fitted network in feature space. Static plotting
 workflows provide shared multi-panel views, while `interactive.py` provides a
-Plotly route and residual-plane view. `MetroLayout` converts graph connectivity,
+Plotly PCA skeleton view with thick-bone cross-sections. `MetroLayout` converts graph connectivity,
 route arc length, junctions, and endpoint directions into a schematic layout.
 Observations are placed at their route positions and offset laterally using
 residual magnitude and local residual directions.
+
+The Plotly skeleton view fits PCA to the observations represented by the
+result, projects each fitted spline into the first three components, and
+samples normalized route positions. At every sample it estimates residual
+covariance in the feature-space hyperplane orthogonal to the spline tangent,
+renders the one-standard-deviation ellipse, and projects that ellipse into
+the ambient PCA coordinates. `n_spline_samples` controls the number of
+cross-sections and `ellipse_bandwidth` controls their local neighborhood.
 
 PCA, classical MDS, and UMAP are display reducers. They are not used to fit the
 route network and do not change route assignments or residuals.

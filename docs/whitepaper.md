@@ -13,7 +13,7 @@ smooth residual-PCA field adds a fixed number of transverse coordinates and a
 reconstruction error.
 
 Fitting is performed in the original feature space, after an optional affine
-standardization. Dimensionality-reduction methods and the metro-style layout
+standardization. Dimensionality-reduction methods and the schematic layout
 are used only for visualization. The implementation exposes diagnostics for
 the distinction between the persistence-derived cycle target and the cycle
 rank realized by the selected graph, and records numerical fallbacks when
@@ -226,11 +226,14 @@ Approximation and Projection (UMAP) may be used to display high-dimensional
 observations and the fitted routes, but they do not change route assignments,
 projections, or residuals.
 
-The metro-style layout converts graph connectivity, route arc length, junctions,
-and endpoint directions into a schematic drawing. Observations are placed at
-their route positions and offset using residual magnitude and local residual
-directions. Metro coordinates are intended to improve readability and are not
-a metric embedding of the original data.
+The schematic layout converts graph connectivity, route arc length, junctions,
+and endpoint directions into a readable drawing. The interactive 3D skeleton
+view instead projects the fitted splines into the first three PCA components.
+At sampled normalized positions it estimates residual covariance in the tangent
+space orthogonal to each spline, draws its one-standard-deviation ellipse, and
+projects the ellipse into PCA space. These cross-sections form thick bones
+around the extracted data skeleton. Neither display is a metric embedding of
+the original data or a change to the fitted route assignments.
 
 ## 6. Computational considerations
 

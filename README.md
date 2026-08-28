@@ -1,7 +1,8 @@
 # Topological graph embedding
 
-Topological graph embedding represents a noisy point cloud with a small,
-smooth network of one-dimensional routes. The learned network can contain
+Topological graph embedding extracts a compact skeleton from a noisy point
+cloud as a small, smooth network of one-dimensional routes. The learned
+network can contain
 endpoints, branches, junctions, open paths, and loops. Each observation is
 assigned to a route, given a position along that route, and described by the
 residual that remains after projection.
@@ -249,18 +250,21 @@ There are two different notions of scale in the project:
 - visualization parameters control how that graph is drawn.
 
 For example, `MetroLayout(residual_width=0.02)` changes the apparent thickness
-of the observation dispersion around a metro route. It does not alter route
-assignments or projection residuals.
+of the observation dispersion around a schematic route. It does not alter
+route assignments or projection residuals.
 
 ## Visualization
 
-The visualization package provides three complementary views:
+The visualization package provides four complementary views:
 
 - a direct feature-space or reduced-space view of observations and fitted
   routes;
 - a graph-coordinate view showing `route_id` against `position`;
-- a metro-style view showing route connectivity, stations, and residual
-  dispersion around each route.
+- a schematic route view showing route connectivity, stations, and residual
+  dispersion around each route; and
+- an ambient 3D PCA view showing the extracted skeleton as thick bones. Each
+  bone is built from sampled one-standard-deviation ellipses in the tangent
+  space orthogonal to its spline.
 
 For high-dimensional data, the display reducer is separate from the fitted
 graph:
@@ -286,9 +290,30 @@ from topological_graph_embedding.visualization import MetroLayout
 layout = MetroLayout(model, residual_width=0.04).fit(result)
 ```
 
-The Plotly view in `visualization.interactive` places the metro map in the XY
-plane and uses local residual principal components for lateral and vertical
-coordinates.
+The Plotly view in `visualization.interactive` projects the observations and
+fitted splines into the first three PCA components of the input. It samples
+each spline at normalized positions in `[0, 1]`; at each position it estimates
+the local residual covariance in the hyperplane orthogonal to the spline
+tangent, draws its 1σ ellipse, and projects that ellipse into the same PCA
+space. The result is a data skeleton with thick bones rather than a flattened
+metro map. For example:
+
+```python
+from topological_graph_embedding.visualization import plot_spline_3d
+
+figure = plot_spline_3d(
+    model,
+    result,
+    n_spline_samples=24,
+    ellipse_bandwidth=0.08,
+)
+figure.show()
+```
+
+`n_spline_samples` controls how many normalized positions receive a cross
+section. `ellipse_bandwidth` controls the local neighborhood in normalized
+route position, while `ellipse_scale=1.0` is the one-standard-deviation
+default.
 
 ## Scikit-learn integration
 
@@ -380,7 +405,7 @@ topological_graph_embedding/
     ├── metro.py                 # schematic metro layout
     ├── network.py               # feature-space network rendering
     ├── plots.py                 # static plotting and evaluation
-    ├── interactive.py           # Plotly 3D view
+    ├── interactive.py           # Plotly PCA skeleton and thick-bone view
     ├── reduction.py             # PCA/MDS/UMAP display reducers
     └── workflows/               # reusable notebook workflows
 ```

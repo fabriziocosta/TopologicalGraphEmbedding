@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from topological_graph_embedding import SplineGraphEmbedding
 from topological_graph_embedding.datasets import generate_synthetic_datasets
-from topological_graph_embedding.visualization import MetroLayout
+from topological_graph_embedding.visualization import MetroLayout, plot_spline_3d
 from topological_graph_embedding.visualization.plots import (
     plot_embedding_row,
     plot_metro_points,
@@ -129,3 +129,30 @@ def test_classical_mds_reducer_supports_out_of_sample_transform():
     assert held_out.shape == (5, 2)
     assert np.all(np.isfinite(displayed))
     assert np.all(np.isfinite(held_out))
+
+
+def test_plot_spline_3d_renders_pca_skeleton_cross_sections():
+    rng = np.random.default_rng(4)
+    parameter = np.linspace(0.0, 2.0 * np.pi, 140)
+    points = np.column_stack([
+        np.cos(parameter),
+        np.sin(parameter),
+        0.35 * np.sin(2.0 * parameter),
+    ]) + 0.025 * rng.normal(size=(len(parameter), 3))
+    model = SplineGraphEmbedding(n_centroids=18, random_state=0).fit(points)
+    result = model.transform(points)
+
+    figure = plot_spline_3d(
+        model,
+        result,
+        n_spline_samples=5,
+        ellipse_samples=12,
+        show_observations=False,
+        show_nodes=False,
+    )
+    line_traces = [trace for trace in figure.data if trace.mode == "lines"]
+    assert len(line_traces) == len(model.routes_) * 6
+    assert figure.layout.scene.xaxis.title.text == "PCA component 1"
+    assert figure.layout.scene.yaxis.title.text == "PCA component 2"
+    assert figure.layout.scene.zaxis.title.text == "PCA component 3"
+    assert any(np.ptp(np.asarray(trace.z, dtype=float)) > 1e-8 for trace in line_traces)

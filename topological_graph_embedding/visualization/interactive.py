@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     go = None
     qualitative = None
 
+from .._frames import _normal_frame
 from ..results import EmbeddingResult
 from .metro import MetroLayout
 from .plots import route_colors
@@ -50,31 +51,133 @@ def _label_groups(labels: Any, count: int) -> list[tuple[str, np.ndarray]]:
     return [(str(value), values == value) for value in unique]
 
 
+def _fit_pca_3d(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Fit a deterministic three-component PCA display transform."""
+    points = np.asarray(points, dtype=float)
+    center = np.mean(points, axis=0)
+    centered = points - center
+    _, _, components = np.linalg.svd(centered, full_matrices=False)
+    components = np.asarray(components[:3], dtype=float)
+    for index in range(len(components)):
+        pivot = int(np.argmax(np.abs(components[index])))
+        if components[index, pivot] < 0.0:
+            components[index] *= -1.0
+    if len(components) < 3:
+        components = np.pad(components, ((0, 3 - len(components)), (0, 0)))
+    return center, components
+
+
+def _pca_transform(
+    points: np.ndarray,
+    center: np.ndarray,
+    components: np.ndarray,
+    z_scale: float = 1.0,
+) -> np.ndarray:
+    """Project points into the PCA display coordinates, padding to 3D."""
+    transformed = (np.asarray(points, dtype=float) - center) @ components.T
+    transformed[:, 2] *= float(z_scale)
+    return transformed
+
+
+def _cross_section(
+    model: Any,
+    result: EmbeddingResult,
+    route: int,
+    t: float,
+    ellipse_samples: int,
+    ellipse_bandwidth: float,
+    ellipse_scale: float,
+) -> np.ndarray:
+    """Return one one-standard-deviation ellipse in original feature space."""
+    spline = model.routes_[route]
+    scale = np.asarray(getattr(model, "scale_", 1.0), dtype=float)
+    mean = np.asarray(getattr(model, "mean_", 0.0), dtype=float)
+    center = np.asarray(spline.evaluate(t), dtype=float) * scale + mean
+    tangent = np.asarray(spline.tangent(t), dtype=float) * scale
+    normal = _normal_frame(tangent)
+    if normal.shape[1] == 0:
+        return np.repeat(center[None, :], ellipse_samples, axis=0)
+
+    route_ids = np.asarray(result.route_id, dtype=int)
+    members = np.flatnonzero(route_ids == route)
+    if not len(members):
+        axes = np.zeros((normal.shape[1], 2), dtype=float)
+    else:
+        values = np.asarray(result.position, dtype=float)[members]
+        distances = np.abs(values - float(t))
+        if spline.closed:
+            distances = np.minimum(distances, 1.0 - distances)
+        weights = np.exp(-0.5 * (distances / ellipse_bandwidth) ** 2)
+        if not np.any(weights > 1e-12):
+            weights[int(np.argmin(distances))] = 1.0
+        residual = np.asarray(result.residual, dtype=float)[members]
+        coordinates = residual @ normal
+        local_mean = np.average(coordinates, axis=0, weights=weights)
+        centered_coordinates = coordinates - local_mean
+        weighted = centered_coordinates * np.sqrt(weights)[:, None]
+        covariance = (weighted.T @ weighted) / max(float(np.sum(weights)), 1e-12)
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+        order = np.argsort(eigenvalues)[::-1]
+        eigenvalues = np.maximum(eigenvalues[order], 0.0)
+        eigenvectors = eigenvectors[:, order]
+        axes = np.zeros((normal.shape[1], 2), dtype=float)
+        count = min(2, normal.shape[1])
+        axes[:, :count] = (
+            eigenvectors[:, :count]
+            * (ellipse_scale * np.sqrt(eigenvalues[:count]))[None, :]
+        )
+        axes = normal @ axes
+
+    angles = np.linspace(0.0, 2.0 * np.pi, ellipse_samples, endpoint=True)
+    return center + np.cos(angles)[:, None] * axes[:, 0] + np.sin(angles)[:, None] * axes[:, 1]
+
+
 def plot_spline_3d(
     model: Any,
     result: EmbeddingResult,
     labels: Any = None,
     layout: MetroLayout | None = None,
     colors: np.ndarray | None = None,
-    title: str = "Spline graph: metro plane + local residual plane",
+    title: str = "Spline skeleton in 3D PCA space",
     z_scale: float = 1.0,
     point_size: float = 4.0,
     show_nodes: bool = True,
+    n_spline_samples: int = 18,
+    ellipse_samples: int = 32,
+    ellipse_bandwidth: float = 0.08,
+    ellipse_scale: float = 1.0,
+    show_observations: bool = True,
 ) -> Any:
-    """Return an interactive 3D spline map.
+    """Return an interactive 3D PCA view of the learned thick-bone skeleton.
 
-    The fitted metro layout is the XY plane and every spline is drawn at
-    ``z=0``.  For each observation, the first locally fitted residual PCA
-    coordinate is the signed lateral offset in XY and the second is the Z
-    coordinate.  ``z_scale`` is a display-only multiplier for the height axis.
+    The observations and fitted routes are projected into the first three
+    principal components of the input represented by ``result``.  Each route
+    receives ``n_spline_samples`` normalized-position cross-sections.  A
+    cross-section is a one-standard-deviation ellipse of the local residuals
+    in the feature-space hyperplane perpendicular to the route tangent; the
+    ellipse is then projected into the same ambient PCA coordinates.
+
+    ``layout`` is retained as a compatibility argument but is no longer used:
+    this view is a feature-space PCA rendering rather than a metro schematic.
     """
     _require_plotly()
     if z_scale <= 0.0:
         raise ValueError("z_scale must be positive")
-    if layout is None:
-        layout = MetroLayout(model, random_state=0).fit(result)
-    points = layout.transform_points_3d(result)
-    points[:, 2] *= float(z_scale)
+    if n_spline_samples < 1:
+        raise ValueError("n_spline_samples must be positive")
+    if ellipse_samples < 4:
+        raise ValueError("ellipse_samples must be at least 4")
+    if ellipse_bandwidth <= 0.0 or not np.isfinite(ellipse_bandwidth):
+        raise ValueError("ellipse_bandwidth must be finite and positive")
+    if ellipse_scale < 0.0 or not np.isfinite(ellipse_scale):
+        raise ValueError("ellipse_scale must be finite and non-negative")
+
+    del layout
+    original_points = np.asarray(result.projected, dtype=float) + np.asarray(
+        result.residual, dtype=float,
+    )
+    pca_center, pca_components = _fit_pca_3d(original_points)
+    points = _pca_transform(original_points, pca_center, pca_components, z_scale)
     route_ids = np.asarray(result.route_id, dtype=int)
     values = np.asarray(result.position, dtype=float)
     residual_norm = np.asarray(result.residual_norm, dtype=float)
@@ -94,37 +197,43 @@ def plot_spline_3d(
         values,
         residual_norm,
     ])
-    for group_index, (label, members) in enumerate(groups):
-        marker_color = target_colors[group_index % len(target_colors)]
-        figure.add_trace(
-            go.Scatter3d(
-                x=points[members, 0],
-                y=points[members, 1],
-                z=points[members, 2],
-                mode="markers",
-                name=label,
-                legendgroup="observations",
-                marker=dict(size=point_size, color=marker_color, opacity=0.72),
-                customdata=customdata[members],
-                hovertemplate=(
-                    "label: %{customdata[0]}<br>"
-                    "spline: %{customdata[1]}<br>"
-                    "t: %{customdata[2]:.3f}<br>"
-                    "residual norm: %{customdata[3]:.3f}<br>"
-                    "x: %{x:.3f}<br>y: %{y:.3f}<br>z: %{z:.3f}"
-                    "<extra></extra>"
-                ),
+    if show_observations:
+        for group_index, (label, members) in enumerate(groups):
+            marker_color = target_colors[group_index % len(target_colors)]
+            figure.add_trace(
+                go.Scatter3d(
+                    x=points[members, 0],
+                    y=points[members, 1],
+                    z=points[members, 2],
+                    mode="markers",
+                    name=label,
+                    legendgroup="observations",
+                    marker=dict(size=point_size, color=marker_color, opacity=0.72),
+                    customdata=customdata[members],
+                    hovertemplate=(
+                        "label: %{customdata[0]}<br>"
+                        "spline: %{customdata[1]}<br>"
+                        "t: %{customdata[2]:.3f}<br>"
+                        "residual norm: %{customdata[3]:.3f}<br>"
+                        "PC1: %{x:.3f}<br>PC2: %{y:.3f}<br>PC3: %{z:.3f}"
+                        "<extra></extra>"
+                    ),
+                )
             )
-        )
 
-    for route, curve in enumerate(layout.transform_splines()):
-        if model.routes_[route].closed:
+    scale = np.asarray(getattr(model, "scale_", 1.0), dtype=float)
+    mean = np.asarray(getattr(model, "mean_", 0.0), dtype=float)
+    for route, spline in enumerate(model.routes_):
+        center_t = np.linspace(0.0, 1.0, n_spline_samples, endpoint=not spline.closed)
+        centerline = np.asarray(spline.evaluate(center_t), dtype=float) * scale + mean
+        curve = _pca_transform(centerline, pca_center, pca_components, z_scale)
+        if spline.closed:
             curve = np.vstack([curve, curve[0]])
         figure.add_trace(
             go.Scatter3d(
                 x=curve[:, 0],
                 y=curve[:, 1],
-                z=np.zeros(len(curve)),
+                z=curve[:, 2],
                 mode="lines",
                 name=f"spline {route}",
                 legendgroup=f"spline-{route}",
@@ -133,20 +242,66 @@ def plot_spline_3d(
             )
         )
 
+        for section_index, t in enumerate(center_t):
+            section = _cross_section(
+                model,
+                result,
+                route,
+                float(t),
+                ellipse_samples,
+                ellipse_bandwidth,
+                ellipse_scale,
+            )
+            section = _pca_transform(section, pca_center, pca_components, z_scale)
+            figure.add_trace(
+                go.Scatter3d(
+                    x=section[:, 0],
+                    y=section[:, 1],
+                    z=section[:, 2],
+                    mode="lines",
+                    name=f"spline {route} · 1σ section",
+                    legendgroup=f"spline-{route}",
+                    showlegend=section_index == 0,
+                    line=dict(
+                        color=_plotly_color(np.r_[colors_by_route[route][:3], 0.55]),
+                        width=3,
+                    ),
+                    hoverinfo="name",
+                )
+            )
+
     if show_nodes:
-        stations = layout.node_positions()
-        junction_ids = getattr(model, "junction_node_ids_", model.junctions_)
-        endpoint_ids = getattr(model, "endpoint_node_ids_", model.endpoints_)
-        junctions = np.asarray([
-            stations[node] for node in junction_ids if node in stations
-        ])
-        endpoints = np.asarray([
-            stations[node] for node in endpoint_ids if node in stations
-        ])
+        station_nodes = getattr(model, "landmark_graph_", None)
+        if station_nodes is None:
+            junctions = np.empty((0, 3), dtype=float)
+            endpoints = np.empty((0, 3), dtype=float)
+        else:
+            junction_ids = getattr(
+                model, "junction_node_ids_", getattr(model, "junctions_", [])
+            )
+            endpoint_ids = getattr(
+                model, "endpoint_node_ids_", getattr(model, "endpoints_", [])
+            )
+            junctions = np.asarray([
+                station_nodes.nodes[node] for node in junction_ids
+                if node in station_nodes.nodes
+            ], dtype=float)
+            endpoints = np.asarray([
+                station_nodes.nodes[node] for node in endpoint_ids
+                if node in station_nodes.nodes
+            ], dtype=float)
+            if len(junctions):
+                junctions = _pca_transform(junctions * scale + mean, pca_center, pca_components, z_scale)
+            else:
+                junctions = np.empty((0, 3), dtype=float)
+            if len(endpoints):
+                endpoints = _pca_transform(endpoints * scale + mean, pca_center, pca_components, z_scale)
+            else:
+                endpoints = np.empty((0, 3), dtype=float)
         if len(junctions):
             figure.add_trace(
                 go.Scatter3d(
-                    x=junctions[:, 0], y=junctions[:, 1], z=np.zeros(len(junctions)),
+                    x=junctions[:, 0], y=junctions[:, 1], z=junctions[:, 2],
                     mode="markers", name="junctions", legendgroup="stations",
                     marker=dict(size=8, color="white", line=dict(color="black", width=2)),
                     hoverinfo="name",
@@ -155,7 +310,7 @@ def plot_spline_3d(
         if len(endpoints):
             figure.add_trace(
                 go.Scatter3d(
-                    x=endpoints[:, 0], y=endpoints[:, 1], z=np.zeros(len(endpoints)),
+                    x=endpoints[:, 0], y=endpoints[:, 1], z=endpoints[:, 2],
                     mode="markers", name="endpoints", legendgroup="stations",
                     marker=dict(size=8, symbol="square", color="white", line=dict(color="black", width=2)),
                     hoverinfo="name",
@@ -168,9 +323,9 @@ def plot_spline_3d(
         margin=dict(l=0, r=0, t=45, b=0),
         legend=dict(itemsizing="constant"),
         scene=dict(
-            xaxis_title="metro-map axis 1",
-            yaxis_title="metro-map axis 2",
-            zaxis_title="local residual PC2",
+            xaxis_title="PCA component 1",
+            yaxis_title="PCA component 2",
+            zaxis_title="PCA component 3",
             aspectmode="data",
             camera=dict(eye=dict(x=1.45, y=1.35, z=1.15)),
         ),
