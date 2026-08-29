@@ -78,6 +78,8 @@ class CandidatePath:
     current_support: float = 0.0
     branch_start: int | None = None
     branch_end: int | None = None
+    persistent_cycle_classes: tuple[int, ...] = ()
+    stability_support: float = 1.0
 
 
 class _WeightedKNNGraph:

@@ -1366,6 +1366,7 @@ class SkeletalEmbedding:
             if cube_dimension >= 3 and len(cube_candidates) == expected_cube_edges:
                 candidates = cube_candidates
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
+        self._tag_persistent_cycle_candidates(candidates)
         self.candidate_paths_ = list(candidates)
         self.candidate_path_attempts_ = candidate_attempts
 
@@ -1692,6 +1693,7 @@ class SkeletalEmbedding:
                     or any(specification["kind"] == "junction" for specification in specifications)
                 )
             ),
+            cycle_class_count=len(self.persistent_cycles_),
         )
         self.mip_status_ = mip_status
         if mip_status == "optimal":
@@ -1723,6 +1725,32 @@ class SkeletalEmbedding:
                 stacklevel=3,
             )
         return graph, selected
+
+    def _tag_persistent_cycle_candidates(self, candidates: list[CandidatePath]) -> None:
+        """Associate candidate routes with approximate persistent cycles."""
+        cycles = [cycle for cycle in self.persistent_cycles_ if cycle.representative is not None]
+        if not cycles or not candidates:
+            return
+        threshold = 2.5 * max(float(self.local_scale_), 1e-8)
+        for cycle_index, cycle in enumerate(cycles):
+            representative = np.asarray(cycle.representative, dtype=float)
+            scores: list[float] = []
+            for candidate in candidates:
+                route = self.routing_graph_.points[np.asarray(candidate.vertices, dtype=int)]
+                distances = np.min(
+                    np.linalg.norm(representative[:, None, :] - route[None, :, :], axis=2),
+                    axis=1,
+                )
+                scores.append(float(np.mean(distances <= threshold)))
+            best_score = max(scores)
+            if best_score <= 0.0:
+                continue
+            for candidate, score in zip(candidates, scores):
+                if score >= max(0.25, 0.75 * best_score):
+                    candidate.persistent_cycle_classes = tuple(sorted({
+                        *candidate.persistent_cycle_classes,
+                        cycle_index,
+                    }))
 
     def _chain_support_points(self, chain: dict[str, Any]) -> Array:
         """Concatenate stored point-level paths for one abstract route chain."""

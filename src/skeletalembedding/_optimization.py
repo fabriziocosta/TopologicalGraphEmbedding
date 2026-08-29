@@ -30,6 +30,7 @@ def select_backbone_mip(
     requested_cycles: int,
     *,
     use_mip: bool = True,
+    cycle_class_count: int = 0,
 ) -> tuple[dict[tuple[int, int], Any], str]:
     """Select candidate paths with a small mixed-integer model.
 
@@ -55,12 +56,18 @@ def select_backbone_mip(
         pair_indices.setdefault(pair, []).append(index)
     n_edges = len(unique)
     n_nodes = len(specifications)
+    # The first block contains binary path-selection variables.  Two
+    # continuous directed-flow variables per candidate provide a compact
+    # single-commodity connectivity certificate for the selected landmark
+    # graph.
+    flow_count = 2 * n_edges
+    variable_count = n_edges + flow_count
     rows: list[np.ndarray] = []
     lower: list[float] = []
     upper: list[float] = []
 
     def degree_row(node: int) -> np.ndarray:
-        row = np.zeros(n_edges, dtype=float)
+        row = np.zeros(variable_count, dtype=float)
         for index, candidate in enumerate(unique):
             if node in (candidate.start_landmark, candidate.end_landmark):
                 row[index] = 1.0
@@ -83,7 +90,7 @@ def select_backbone_mip(
     # Never select two alternative paths with the same logical endpoints.
     for indices in pair_indices.values():
         if len(indices) > 1:
-            row = np.zeros(n_edges, dtype=float)
+            row = np.zeros(variable_count, dtype=float)
             row[indices] = 1.0
             rows.append(row)
             lower.append(0.0)
@@ -95,11 +102,57 @@ def select_backbone_mip(
     ]
     component_count = _components(candidate_pairs, n_nodes)
     target_edges = n_nodes - component_count + max(0, int(requested_cycles))
-    rows.append(np.ones(n_edges, dtype=float))
+    row = np.zeros(variable_count, dtype=float)
+    row[:n_edges] = 1.0
+    rows.append(row)
     lower.append(float(target_edges))
     upper.append(float(target_edges))
 
-    matrix = lil_matrix((len(rows), n_edges), dtype=float)
+    # Send one unit of flow from the first landmark to every other landmark.
+    # A selected undirected path can carry flow in either direction, bounded
+    # by the corresponding binary path variable.  This rules out disconnected
+    # collections of otherwise degree- and cycle-feasible paths.
+    if n_nodes > 1:
+        root = 0
+        for node in range(n_nodes):
+            row = np.zeros(variable_count, dtype=float)
+            for index, candidate in enumerate(unique):
+                left, right = int(candidate.start_landmark), int(candidate.end_landmark)
+                forward = n_edges + 2 * index
+                backward = forward + 1
+                if node == left:
+                    row[forward] += 1.0
+                    row[backward] -= 1.0
+                elif node == right:
+                    row[forward] -= 1.0
+                    row[backward] += 1.0
+            demand = float(n_nodes - 1) if node == root else -1.0
+            rows.append(row)
+            lower.append(demand)
+            upper.append(demand)
+        for index in range(n_edges):
+            row = np.zeros(variable_count, dtype=float)
+            row[n_edges + 2 * index] = 1.0
+            row[n_edges + 2 * index + 1] = 1.0
+            row[index] = -float(n_nodes - 1)
+            rows.append(row)
+            lower.append(-np.inf)
+            upper.append(0.0)
+
+    for cycle_class in range(max(0, int(cycle_class_count))):
+        row = np.zeros(variable_count, dtype=float)
+        tagged = [
+            index for index, candidate in enumerate(unique)
+            if cycle_class in getattr(candidate, "persistent_cycle_classes", ())
+        ]
+        if not tagged:
+            continue
+        row[tagged] = 1.0
+        rows.append(row)
+        lower.append(1.0)
+        upper.append(np.inf)
+
+    matrix = lil_matrix((len(rows), variable_count), dtype=float)
     for row_index, row in enumerate(rows):
         matrix[row_index] = row
     objective = np.asarray(
@@ -107,21 +160,32 @@ def select_backbone_mip(
             float(candidate.total_cost)
             - 0.05 * float(getattr(candidate, "electrical_support", 0.0))
             - 0.05 * float(getattr(candidate, "current_support", 0.0))
+            - 0.05 * float(getattr(candidate, "stability_support", 1.0))
             for candidate in unique
         ],
         dtype=float,
     )
+    objective = np.concatenate([objective, np.zeros(flow_count, dtype=float)])
     result = milp(
         c=objective,
-        integrality=np.ones(n_edges, dtype=int),
-        bounds=Bounds(0.0, 1.0),
+        integrality=np.concatenate([
+            np.ones(n_edges, dtype=int),
+            np.zeros(flow_count, dtype=int),
+        ]),
+        bounds=Bounds(
+            np.zeros(variable_count, dtype=float),
+            np.concatenate([
+                np.ones(n_edges, dtype=float),
+                np.full(flow_count, max(0, n_nodes - 1), dtype=float),
+            ]),
+        ),
         constraints=LinearConstraint(matrix.tocsr(), np.asarray(lower), np.asarray(upper)),
         options={"presolve": True},
     )
     if not result.success or result.x is None:
         return {}, f"infeasible:{getattr(result, 'message', 'unknown')}"
     selected: dict[tuple[int, int], Any] = {}
-    for index, value in enumerate(result.x):
+    for index, value in enumerate(result.x[:n_edges]):
         if value >= 0.5:
             candidate = unique[index]
             selected[tuple(sorted((candidate.start_landmark, candidate.end_landmark)))] = candidate
