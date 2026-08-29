@@ -146,7 +146,7 @@ def select_backbone_mip(
             if cycle_class in getattr(candidate, "persistent_cycle_classes", ())
         ]
         if not tagged:
-            continue
+            return {}, f"infeasible:missing-persistent-cycle-class:{cycle_class}"
         row[tagged] = 1.0
         rows.append(row)
         lower.append(1.0)
