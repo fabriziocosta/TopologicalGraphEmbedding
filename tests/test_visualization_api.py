@@ -149,10 +149,47 @@ def test_plot_spline_3d_renders_pca_skeleton_cross_sections():
         ellipse_samples=12,
         show_observations=False,
         show_nodes=False,
+        show_reduced_graph=False,
     )
-    line_traces = [trace for trace in figure.data if trace.mode == "lines"]
+    line_traces = [trace for trace in figure.data if getattr(trace, "mode", None) == "lines"]
     assert len(line_traces) == len(model.routes_) * 6
     assert figure.layout.scene.xaxis.title.text == "PCA component 1"
     assert figure.layout.scene.yaxis.title.text == "PCA component 2"
     assert figure.layout.scene.zaxis.title.text == "PCA component 3"
     assert any(np.ptp(np.asarray(trace.z, dtype=float)) > 1e-8 for trace in line_traces)
+
+
+def test_plot_spline_3d_renders_a_volumetric_junction_ellipsoid():
+    planar = generate_synthetic_datasets(
+        n=500, noise=0.045, random_state=0,
+    )["figure-eight"]
+    points = np.column_stack([
+        planar,
+        np.random.default_rng(3).normal(scale=0.045, size=len(planar)),
+    ])
+    model = SplineGraphEmbedding(
+        n_centroids=36,
+        persistence_threshold=4.0,
+        persistence_max_points=500,
+        max_cycles=4,
+        random_state=0,
+        standardize=False,
+        backbone_initialization="topological",
+    ).fit(points)
+    result = model.transform(points)
+
+    figure = plot_spline_3d(
+        model,
+        result,
+        ellipse_samples=16,
+        show_observations=False,
+    )
+    ellipsoids = [trace for trace in figure.data if trace.name == "junction ellipsoid"]
+    assert model.realized_cycle_count_ == 2
+    assert len(model.junction_node_ids_) == 1
+    assert len(model.routes_) == 2
+    assert all(route.closed for route in model.routes_)
+    assert len(ellipsoids) == 1
+    assert any(trace.name == "reduced graph" for trace in figure.data)
+    for coordinate in (ellipsoids[0].x, ellipsoids[0].y, ellipsoids[0].z):
+        assert np.ptp(np.asarray(coordinate, dtype=float)) > 1e-8

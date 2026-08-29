@@ -581,7 +581,7 @@ class SplineGraphEmbedding:
             self.detect_junctions
             and not self.linear_structure_
             and self.requested_cycle_count_ == 2
-            and points.shape[1] == 2
+            and points.shape[1] >= 2
             and len(routing_components) == 1
             and len(points)
         ):
@@ -598,7 +598,11 @@ class SplineGraphEmbedding:
                 angles = np.arctan2(projection[:, 1], projection[:, 0])
             else:
                 angles = centered[:, 0]
-            radii = np.linalg.norm(centered, axis=1)
+            # A planar synthetic graph may have independent noise dimensions.
+            # Use the two dominant PCA coordinates for the annulus as well, so
+            # that orthogonal measurement noise cannot split the crossing into
+            # several false junction regions.
+            radii = np.linalg.norm(projection, axis=1)
             annulus = np.flatnonzero(
                 (radii >= 0.5 * self.local_scale_)
                 & (radii <= 8.0 * self.local_scale_)

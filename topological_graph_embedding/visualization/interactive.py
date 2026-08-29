@@ -132,6 +132,63 @@ def _cross_section(
     return center + np.cos(angles)[:, None] * axes[:, 0] + np.sin(angles)[:, None] * axes[:, 1]
 
 
+def _junction_ellipsoid(
+    model: Any,
+    original_points: np.ndarray,
+    center_standardized: np.ndarray,
+    pca_center: np.ndarray,
+    pca_components: np.ndarray,
+    z_scale: float,
+    ellipse_samples: int,
+    ellipsoid_scale: float,
+) -> np.ndarray:
+    """Build a 3D one-standard-deviation ellipsoid at a graph singularity."""
+    scale = np.asarray(getattr(model, "scale_", 1.0), dtype=float)
+    mean = np.asarray(getattr(model, "mean_", 0.0), dtype=float)
+    center = np.asarray(center_standardized, dtype=float) * scale + mean
+    original_points = np.asarray(original_points, dtype=float)
+    standardized = (original_points - mean) / scale
+    display_points = _pca_transform(
+        original_points, pca_center, pca_components, z_scale,
+    )
+    display_center = _pca_transform(
+        center[None, :], pca_center, pca_components, z_scale,
+    )[0]
+    distances = np.linalg.norm(standardized - center_standardized, axis=1)
+    local_scale = float(getattr(model, "local_scale_", np.median(distances)))
+    radius = max(2.5 * local_scale, 1e-8)
+    members = np.flatnonzero(distances <= radius)
+    minimum_members = max(8, 3 * original_points.shape[1])
+    if len(members) < minimum_members:
+        members = np.argsort(distances)[:minimum_members]
+    local = display_points[members] - display_center
+    weights = np.exp(-0.5 * (distances[members] / max(radius * 0.55, 1e-8)) ** 2)
+    weighted = local * np.sqrt(weights)[:, None]
+    covariance = (weighted.T @ weighted) / max(float(np.sum(weights)), 1e-12)
+    # Keep the junction volume genuinely three-dimensional even when the
+    # third coordinate is a very small, intentionally added noise dimension.
+    display_spread = np.std(display_points, axis=0)
+    floor = (0.12 * local_scale * np.maximum(display_spread, 1e-12)) ** 2
+    covariance = covariance + np.diag(floor)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    order = np.argsort(eigenvalues)[::-1]
+    axes = eigenvectors[:, order] * (
+        ellipsoid_scale * np.sqrt(np.maximum(eigenvalues[order], 1e-12))
+    )[None, :]
+
+    azimuth = np.linspace(0.0, 2.0 * np.pi, ellipse_samples, endpoint=True)
+    elevation = np.linspace(0.0, np.pi, max(8, ellipse_samples // 2))
+    unit = np.stack(
+        [
+            np.sin(elevation)[:, None] * np.cos(azimuth)[None, :],
+            np.sin(elevation)[:, None] * np.sin(azimuth)[None, :],
+            np.broadcast_to(np.cos(elevation)[:, None], (len(elevation), len(azimuth))),
+        ],
+        axis=-1,
+    )
+    return display_center + unit @ axes.T
+
+
 def plot_spline_3d(
     model: Any,
     result: EmbeddingResult,
@@ -146,7 +203,9 @@ def plot_spline_3d(
     ellipse_samples: int = 32,
     ellipse_bandwidth: float = 0.08,
     ellipse_scale: float = 1.0,
+    junction_ellipsoid_scale: float = 1.0,
     show_observations: bool = True,
+    show_reduced_graph: bool = True,
 ) -> Any:
     """Return an interactive 3D PCA view of the learned thick-bone skeleton.
 
@@ -171,6 +230,8 @@ def plot_spline_3d(
         raise ValueError("ellipse_bandwidth must be finite and positive")
     if ellipse_scale < 0.0 or not np.isfinite(ellipse_scale):
         raise ValueError("ellipse_scale must be finite and non-negative")
+    if junction_ellipsoid_scale < 0.0 or not np.isfinite(junction_ellipsoid_scale):
+        raise ValueError("junction_ellipsoid_scale must be finite and non-negative")
 
     del layout
     original_points = np.asarray(result.projected, dtype=float) + np.asarray(
@@ -188,7 +249,13 @@ def plot_spline_3d(
         raise ValueError("colors must contain at least one color per spline")
 
     figure = go.Figure()
-    groups = _label_groups(labels, count)
+    if labels is None:
+        groups = [
+            (f"spline {route}", route_ids == route)
+            for route in range(len(model.routes_))
+        ]
+    else:
+        groups = _label_groups(labels, count)
     target_colors = qualitative.Dark24
     raw_labels = np.zeros(count, dtype=object) if labels is None else np.asarray(labels)
     customdata = np.column_stack([
@@ -199,7 +266,11 @@ def plot_spline_3d(
     ])
     if show_observations:
         for group_index, (label, members) in enumerate(groups):
-            marker_color = target_colors[group_index % len(target_colors)]
+            marker_color = (
+                _plotly_color(colors_by_route[group_index])
+                if labels is None
+                else target_colors[group_index % len(target_colors)]
+            )
             figure.add_trace(
                 go.Scatter3d(
                     x=points[members, 0],
@@ -223,9 +294,38 @@ def plot_spline_3d(
 
     scale = np.asarray(getattr(model, "scale_", 1.0), dtype=float)
     mean = np.asarray(getattr(model, "mean_", 0.0), dtype=float)
+    if show_reduced_graph:
+        reduced_graph = getattr(model, "landmark_graph_", None)
+        if reduced_graph is not None:
+            for edge_index, (left, right) in enumerate(reduced_graph.edges):
+                graph_edge = np.asarray([
+                    reduced_graph.nodes[left], reduced_graph.nodes[right],
+                ], dtype=float) * scale + mean
+                graph_edge = _pca_transform(
+                    graph_edge, pca_center, pca_components, z_scale,
+                )
+                figure.add_trace(
+                    go.Scatter3d(
+                        x=graph_edge[:, 0],
+                        y=graph_edge[:, 1],
+                        z=graph_edge[:, 2],
+                        mode="lines",
+                        name="reduced graph" if edge_index == 0 else "reduced graph edge",
+                        legendgroup="reduced-graph",
+                        showlegend=edge_index == 0,
+                        line=dict(color="black", width=3),
+                        hoverinfo="name",
+                    )
+                )
     for route, spline in enumerate(model.routes_):
-        center_t = np.linspace(0.0, 1.0, n_spline_samples, endpoint=not spline.closed)
-        centerline = np.asarray(spline.evaluate(center_t), dtype=float) * scale + mean
+        # Keep the user-controlled station count for tangent-space sections,
+        # but draw the centerline densely enough that spline smoothness is not
+        # hidden by a low-resolution polygonal rendering.
+        section_t = np.linspace(0.0, 1.0, n_spline_samples, endpoint=not spline.closed)
+        centerline_t = np.linspace(
+            0.0, 1.0, max(64, 4 * n_spline_samples), endpoint=not spline.closed,
+        )
+        centerline = np.asarray(spline.evaluate(centerline_t), dtype=float) * scale + mean
         curve = _pca_transform(centerline, pca_center, pca_components, z_scale)
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
@@ -242,7 +342,8 @@ def plot_spline_3d(
             )
         )
 
-        for section_index, t in enumerate(center_t):
+        sections = []
+        for t in section_t:
             section = _cross_section(
                 model,
                 result,
@@ -253,6 +354,29 @@ def plot_spline_3d(
                 ellipse_scale,
             )
             section = _pca_transform(section, pca_center, pca_components, z_scale)
+            sections.append(section)
+
+        section_grid = np.asarray(sections, dtype=float)
+        if spline.closed:
+            section_grid = np.vstack([section_grid, section_grid[:1]])
+        route_rgb = np.asarray(colors_by_route[route], dtype=float)[:3]
+        route_hex = "#" + "".join(f"{int(np.clip(value, 0.0, 1.0) * 255):02x}" for value in route_rgb)
+        figure.add_trace(
+            go.Surface(
+                x=section_grid[:, :, 0],
+                y=section_grid[:, :, 1],
+                z=section_grid[:, :, 2],
+                name=f"spline {route} · 1σ body",
+                legendgroup=f"spline-{route}",
+                showlegend=False,
+                opacity=0.28,
+                colorscale=[[0.0, route_hex], [1.0, route_hex]],
+                showscale=False,
+                hoverinfo="skip",
+            )
+        )
+
+        for section in sections:
             figure.add_trace(
                 go.Scatter3d(
                     x=section[:, 0],
@@ -261,10 +385,10 @@ def plot_spline_3d(
                     mode="lines",
                     name=f"spline {route} · 1σ section",
                     legendgroup=f"spline-{route}",
-                    showlegend=section_index == 0,
+                    showlegend=False,
                     line=dict(
-                        color=_plotly_color(np.r_[colors_by_route[route][:3], 0.55]),
-                        width=3,
+                        color=_plotly_color(np.r_[route_rgb, 0.32]),
+                        width=1,
                     ),
                     hoverinfo="name",
                 )
@@ -273,6 +397,7 @@ def plot_spline_3d(
     if show_nodes:
         station_nodes = getattr(model, "landmark_graph_", None)
         if station_nodes is None:
+            junction_centers_original = np.empty((0, original_points.shape[1]), dtype=float)
             junctions = np.empty((0, 3), dtype=float)
             endpoints = np.empty((0, 3), dtype=float)
         else:
@@ -285,13 +410,14 @@ def plot_spline_3d(
             junctions = np.asarray([
                 station_nodes.nodes[node] for node in junction_ids
                 if node in station_nodes.nodes
-            ], dtype=float)
+            ], dtype=float).reshape(-1, original_points.shape[1])
             endpoints = np.asarray([
                 station_nodes.nodes[node] for node in endpoint_ids
                 if node in station_nodes.nodes
-            ], dtype=float)
+            ], dtype=float).reshape(-1, original_points.shape[1])
+            junction_centers_original = junctions * scale + mean
             if len(junctions):
-                junctions = _pca_transform(junctions * scale + mean, pca_center, pca_components, z_scale)
+                junctions = _pca_transform(junction_centers_original, pca_center, pca_components, z_scale)
             else:
                 junctions = np.empty((0, 3), dtype=float)
             if len(endpoints):
@@ -299,14 +425,33 @@ def plot_spline_3d(
             else:
                 endpoints = np.empty((0, 3), dtype=float)
         if len(junctions):
-            figure.add_trace(
-                go.Scatter3d(
-                    x=junctions[:, 0], y=junctions[:, 1], z=junctions[:, 2],
-                    mode="markers", name="junctions", legendgroup="stations",
-                    marker=dict(size=8, color="white", line=dict(color="black", width=2)),
-                    hoverinfo="name",
+            junction_scale = np.asarray(getattr(model, "scale_", 1.0), dtype=float)
+            junction_mean = np.asarray(getattr(model, "mean_", 0.0), dtype=float)
+            for junction_index, junction in enumerate(junction_centers_original):
+                ellipsoid = _junction_ellipsoid(
+                    model,
+                    original_points,
+                    (junction - junction_mean) / junction_scale,
+                    pca_center,
+                    pca_components,
+                    z_scale,
+                    ellipse_samples,
+                    junction_ellipsoid_scale,
                 )
-            )
+                figure.add_trace(
+                    go.Surface(
+                        x=ellipsoid[:, :, 0],
+                        y=ellipsoid[:, :, 1],
+                        z=ellipsoid[:, :, 2],
+                        name="junction ellipsoid",
+                        legendgroup="stations",
+                        showlegend=junction_index == 0,
+                        opacity=0.42,
+                        colorscale=[[0.0, "#303030"], [1.0, "#b0b0b0"]],
+                        showscale=False,
+                        hoverinfo="name",
+                    )
+                )
         if len(endpoints):
             figure.add_trace(
                 go.Scatter3d(
