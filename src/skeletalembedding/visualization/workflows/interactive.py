@@ -10,12 +10,12 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.visualization.plots import (
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.visualization.plots import (
     evaluate_route_target,
     plot_embedding_row,
 )
-from topological_graph_embedding.visualization.reduction import fit_reducer
+from skeletalembedding.visualization.reduction import fit_reducer
 
 
 def _unpack_dataset(value: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -193,8 +193,8 @@ def display_interactive_viewer(
         )
         merge_distance = None if merge_slider.value == 0 else merge_slider.value
         is_binary_tree = name == "binary-tree"
-        model = SplineGraphEmbedding(
-            backbone_initialization="coarsen" if is_binary_tree else "topological",
+        model = SkeletalEmbedding(
+            initialization="legacy_coarsen" if is_binary_tree else "skeletal",
             n_centroids=max(centroid_slider.value, 64) if is_binary_tree else centroid_slider.value,
             persistence_threshold=threshold,
             spline_smoothing=smoothing_slider.value,

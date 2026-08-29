@@ -5,21 +5,21 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.datasets import generate_synthetic_datasets
-from topological_graph_embedding.visualization import MetroLayout, plot_spline_3d
-from topological_graph_embedding.visualization.plots import (
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.datasets import generate_synthetic_datasets
+from skeletalembedding.visualization import MetroLayout, plot_spline_3d
+from skeletalembedding.visualization.plots import (
     plot_embedding_row,
     plot_metro_points,
     route_colors,
 )
-from topological_graph_embedding.visualization.reduction import fit_reducer
-from topological_graph_embedding.visualization.workflows.synthetic import fit_datasets
+from skeletalembedding.visualization.reduction import fit_reducer
+from skeletalembedding.visualization.workflows.synthetic import fit_datasets
 
 
 def test_metro_layout_consumes_embedding_result():
     points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
-    model = SplineGraphEmbedding(n_centroids=12, random_state=0).fit(points)
+    model = SkeletalEmbedding(n_centroids=12, random_state=0).fit(points)
     result = model.transform(points)
     layout = MetroLayout(model, random_state=0).fit(result)
     displayed = layout.transform_points(result)
@@ -48,14 +48,14 @@ def test_binary_tree_workflow_keeps_the_fitted_graph_acyclic():
 
     model = models["binary-tree"]
     assert summary[0]["cycles"] == 0
-    assert model.backbone_initialization == "coarsen"
+    assert model.initialization == "legacy_coarsen"
     assert model.n_centroids == 64
     assert all(not route.closed for route in model.routes_)
 
 
 def test_plot_network_uses_public_name():
     points = generate_synthetic_datasets(n=80, noise=0.03, random_state=1)["circle"]
-    model = SplineGraphEmbedding(n_centroids=16, random_state=0).fit(points)
+    model = SkeletalEmbedding(n_centroids=16, random_state=0).fit(points)
     axis = model.plot_network(points)
     assert axis is not None
     plt.close(axis.figure)
@@ -63,8 +63,8 @@ def test_plot_network_uses_public_name():
 
 def test_plot_embedding_row_ignores_unresolved_station_ids():
     points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
-    model = SplineGraphEmbedding(
-        backbone_initialization="topological", n_centroids=12, random_state=0,
+    model = SkeletalEmbedding(
+        initialization="skeletal", n_centroids=12, random_state=0,
     ).fit(points)
     result = model.transform(points)
     model.endpoint_node_ids_ = [*model.endpoint_node_ids_, None]
@@ -80,7 +80,7 @@ def test_plot_embedding_row_ignores_unresolved_station_ids():
 
 def test_metro_points_use_classes_or_route_ids_as_the_sole_color_source():
     points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
-    model = SplineGraphEmbedding(n_centroids=12, random_state=0).fit(points)
+    model = SkeletalEmbedding(n_centroids=12, random_state=0).fit(points)
     result = model.transform(points)
 
     fallback_figure, fallback_axis = plt.subplots()
@@ -139,7 +139,7 @@ def test_plot_spline_3d_renders_pca_skeleton_cross_sections():
         np.sin(parameter),
         0.35 * np.sin(2.0 * parameter),
     ]) + 0.025 * rng.normal(size=(len(parameter), 3))
-    model = SplineGraphEmbedding(n_centroids=18, random_state=0).fit(points)
+    model = SkeletalEmbedding(n_centroids=18, random_state=0).fit(points)
     result = model.transform(points)
 
     figure = plot_spline_3d(
@@ -167,14 +167,14 @@ def test_plot_spline_3d_renders_a_volumetric_junction_ellipsoid():
         planar,
         np.random.default_rng(3).normal(scale=0.045, size=len(planar)),
     ])
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=36,
         persistence_threshold=4.0,
         persistence_max_points=500,
         max_cycles=4,
         random_state=0,
         standardize=False,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 

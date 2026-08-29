@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError, fields
 import numpy as np
 import pytest
 
-from topological_graph_embedding import EmbeddingResult, SplineGraphEmbedding
-from topological_graph_embedding.datasets import generate_synthetic_datasets
+from skeletalembedding import EmbeddingResult, SkeletalEmbedding
+from skeletalembedding.datasets import generate_synthetic_datasets
 
 
 def test_embedding_result_is_frozen_and_attribute_based():
@@ -38,7 +38,7 @@ def test_embedding_projection_and_normal_coordinates_are_batch_independent():
         rng.normal(0.0, 0.06, 90),
         rng.normal(0.0, 0.06, 90),
     ])
-    model = SplineGraphEmbedding(n_centroids=12, random_state=2).fit(points)
+    model = SkeletalEmbedding(n_centroids=12, random_state=2).fit(points)
     full = model.transform(points)
     subset = model.transform(points[::3])
     coordinates = model.normal_coordinates(full)
@@ -54,7 +54,7 @@ def test_embedding_projection_and_normal_coordinates_are_batch_independent():
 )
 def test_synthetic_topology_diagnostics(name, expected_cycles):
     points = generate_synthetic_datasets(n=300, noise=0.03, random_state=0)[name]
-    model = SplineGraphEmbedding(n_centroids=24, max_cycles=5, random_state=0).fit(points)
+    model = SkeletalEmbedding(n_centroids=24, max_cycles=5, random_state=0).fit(points)
     assert model.realized_cycle_count_ == expected_cycles
     assert model.topology_shortfall_ == 0
     assert np.all(model.transform(points).route_id >= 0)
@@ -62,12 +62,12 @@ def test_synthetic_topology_diagnostics(name, expected_cycles):
 
 def test_empty_and_invalid_inputs_are_rejected():
     with pytest.raises(ValueError):
-        SplineGraphEmbedding().fit(np.empty((0, 2)))
+        SkeletalEmbedding().fit(np.empty((0, 2)))
     with pytest.raises(ValueError):
-        SplineGraphEmbedding().fit(np.empty((3, 0)))
+        SkeletalEmbedding().fit(np.empty((3, 0)))
     with pytest.raises(ValueError):
-        SplineGraphEmbedding(topology_neighbors=1)
-    model = SplineGraphEmbedding(n_centroids=3).fit(np.full((5, 2), 2.0))
+        SkeletalEmbedding(topology_neighbors=1)
+    model = SkeletalEmbedding(n_centroids=3).fit(np.full((5, 2), 2.0))
     assert np.isfinite(model.local_scale_)
     assert np.all(model.transform(np.full((5, 2), 2.0)).route_id >= 0)
 

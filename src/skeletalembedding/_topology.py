@@ -35,6 +35,11 @@ class EndpointRegion:
     node_id: int | None = None
 
 
+# Public terminology aliases used by the structural diagnostics API.
+Junction = JunctionRegion
+Endpoint = EndpointRegion
+
+
 @dataclass
 class TopologyEstimate:
     """Diagnostics produced by the topology initialization stage."""
@@ -46,6 +51,17 @@ class TopologyEstimate:
     endpoint_regions: list[EndpointRegion]
     branch_counts: Array
     topology_confidence: Array
+
+
+@dataclass
+class PersistentCycle:
+    """A persistent H1 feature retained as a backbone constraint."""
+
+    birth: float
+    death: float
+    persistence: float
+    representative: Array | None = None
+    stability_support: float = 1.0
 
 
 @dataclass
@@ -565,6 +581,7 @@ class _LandmarkGraph:
             for key, value in (nodes or {}).items()
         }
         self.edges: dict[tuple[int, int], float] = {}
+        self.edge_metadata: dict[tuple[int, int], dict[str, Any]] = {}
 
     @staticmethod
     def _key(u: int, v: int) -> tuple[int, int]:
@@ -575,6 +592,9 @@ class _LandmarkGraph:
     def copy(self) -> _LandmarkGraph:
         result = _LandmarkGraph(self.nodes)
         result.edges = self.edges.copy()
+        result.edge_metadata = {
+            edge: dict(metadata) for edge, metadata in self.edge_metadata.items()
+        }
         return result
 
     def add_edge(self, u: int, v: int, weight: float | None = None) -> None:
@@ -584,6 +604,10 @@ class _LandmarkGraph:
         if weight is None:
             weight = float(np.linalg.norm(self.nodes[u] - self.nodes[v]))
         self.edges[key] = float(weight)
+
+    def set_edge_metadata(self, u: int, v: int, **metadata: Any) -> None:
+        """Attach structural metadata to an existing edge."""
+        self.edge_metadata[self._key(u, v)] = dict(metadata)
 
     def remove_edge(self, u: int, v: int) -> None:
         self.edges.pop(self._key(u, v), None)
@@ -1105,7 +1129,7 @@ def estimate_topology(
     """Estimate cycle and local branch constraints for a point cloud.
 
     This compact internal entry point is useful for diagnostics and unit
-    tests.  ``SplineGraphEmbedding`` calls the same primitives while retaining
+    tests.  ``SkeletalEmbedding`` calls the same primitives while retaining
     fitted graph and routing diagnostics on the estimator.
     """
     points = _as_point_cloud(X)

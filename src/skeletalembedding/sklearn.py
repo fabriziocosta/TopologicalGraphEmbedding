@@ -1,4 +1,4 @@
-"""Optional scikit-learn adapters for :mod:`topological_graph_embedding`."""
+"""Optional scikit-learn adapters for :mod:`skeletalembedding`."""
 
 from __future__ import annotations
 
@@ -10,18 +10,20 @@ from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
-from .embedding import SplineGraphEmbedding
+from .embedding import SkeletalEmbedding
 from .results import EmbeddingResult
 
 Array = np.ndarray
 
 
-class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
-    """Fit a spline route network and expose numeric embedding features."""
+class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
+    """Fit a skeletal model and expose numeric element-coordinate features."""
 
     def __init__(
         self,
         n_centroids: int = 32,
+        n_neighbors: int = 6,
+        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -34,13 +36,12 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         persistence_max_points: int = 60,
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
-        topology_neighbors: int = 6,
+        topology_neighbors: int | None = None,
         mutual_knn: bool = False,
         add_mst: bool = False,
         max_residual_dim: int = 0,
         residual_pca_bandwidth: float = 0.1,
         residual_subspace_smoothness: float = 0.0,
-        backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
         junction_scales: int | Sequence[float] = 6,
@@ -58,8 +59,34 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
+        use_mip: bool = True,
+        coverage_refinement: bool = False,
+        coverage_error_tolerance: float | None = None,
+        coverage_relative_tolerance: float | None = None,
+        coverage_quantile: float = 0.95,
+        coverage_max_iterations: int = 10,
+        coverage_max_ribs: int | None = None,
+        coverage_max_candidates_per_iteration: int = 20,
+        coverage_candidate_spacing: float | None = None,
+        coverage_min_error: float | None = None,
+        coverage_min_gain: float = 0.0,
+        coverage_length_penalty: float = 0.0,
+        coverage_rib_penalty: float = 0.0,
+        coverage_junction_penalty: float = 0.0,
+        coverage_selection: str = "greedy",
+        stability_selection: bool = False,
+        stability_runs: int = 30,
+        stability_fraction: float = 0.7,
+        stability_min_support: float = 0.75,
+        stability_jitter: float = 0.0,
+        rib_stability_runs: int | None = None,
+        rib_min_support: float = 0.6,
+        stability_residual_subspaces: bool = False,
+        n_jobs: int | None = None,
     ) -> None:
         self.n_centroids = n_centroids
+        self.n_neighbors = n_neighbors
+        self.initialization = initialization
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = spline_smoothing
         self.spline_control_mode = spline_control_mode
@@ -78,7 +105,6 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.max_residual_dim = max_residual_dim
         self.residual_pca_bandwidth = residual_pca_bandwidth
         self.residual_subspace_smoothness = residual_subspace_smoothness
-        self.backbone_initialization = backbone_initialization
         self.detect_cycles = detect_cycles
         self.detect_junctions = detect_junctions
         self.junction_scales = junction_scales
@@ -96,10 +122,36 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.routing_resistance_weight = routing_resistance_weight
         self.routing_current_weight = routing_current_weight
         self.use_tangent_boundary_conditions = use_tangent_boundary_conditions
+        self.use_mip = use_mip
+        self.coverage_refinement = coverage_refinement
+        self.coverage_error_tolerance = coverage_error_tolerance
+        self.coverage_relative_tolerance = coverage_relative_tolerance
+        self.coverage_quantile = coverage_quantile
+        self.coverage_max_iterations = coverage_max_iterations
+        self.coverage_max_ribs = coverage_max_ribs
+        self.coverage_max_candidates_per_iteration = coverage_max_candidates_per_iteration
+        self.coverage_candidate_spacing = coverage_candidate_spacing
+        self.coverage_min_error = coverage_min_error
+        self.coverage_min_gain = coverage_min_gain
+        self.coverage_length_penalty = coverage_length_penalty
+        self.coverage_rib_penalty = coverage_rib_penalty
+        self.coverage_junction_penalty = coverage_junction_penalty
+        self.coverage_selection = coverage_selection
+        self.stability_selection = stability_selection
+        self.stability_runs = stability_runs
+        self.stability_fraction = stability_fraction
+        self.stability_min_support = stability_min_support
+        self.stability_jitter = stability_jitter
+        self.rib_stability_runs = rib_stability_runs
+        self.rib_min_support = rib_min_support
+        self.stability_residual_subspaces = stability_residual_subspaces
+        self.n_jobs = n_jobs
 
-    def _new_embedding(self) -> SplineGraphEmbedding:
-        return SplineGraphEmbedding(
+    def _new_embedding(self) -> SkeletalEmbedding:
+        return SkeletalEmbedding(
             n_centroids=self.n_centroids,
+            n_neighbors=self.n_neighbors,
+            initialization=self.initialization,
             persistence_threshold=self.persistence_threshold,
             spline_smoothing=self.spline_smoothing,
             spline_control_mode=self.spline_control_mode,
@@ -118,7 +170,6 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             max_residual_dim=self.max_residual_dim,
             residual_pca_bandwidth=self.residual_pca_bandwidth,
             residual_subspace_smoothness=self.residual_subspace_smoothness,
-            backbone_initialization=self.backbone_initialization,
             detect_cycles=self.detect_cycles,
             detect_junctions=self.detect_junctions,
             junction_scales=self.junction_scales,
@@ -136,13 +187,37 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
             routing_resistance_weight=self.routing_resistance_weight,
             routing_current_weight=self.routing_current_weight,
             use_tangent_boundary_conditions=self.use_tangent_boundary_conditions,
+            use_mip=self.use_mip,
+            coverage_refinement=self.coverage_refinement,
+            coverage_error_tolerance=self.coverage_error_tolerance,
+            coverage_relative_tolerance=self.coverage_relative_tolerance,
+            coverage_quantile=self.coverage_quantile,
+            coverage_max_iterations=self.coverage_max_iterations,
+            coverage_max_ribs=self.coverage_max_ribs,
+            coverage_max_candidates_per_iteration=self.coverage_max_candidates_per_iteration,
+            coverage_candidate_spacing=self.coverage_candidate_spacing,
+            coverage_min_error=self.coverage_min_error,
+            coverage_min_gain=self.coverage_min_gain,
+            coverage_length_penalty=self.coverage_length_penalty,
+            coverage_rib_penalty=self.coverage_rib_penalty,
+            coverage_junction_penalty=self.coverage_junction_penalty,
+            coverage_selection=self.coverage_selection,
+            stability_selection=self.stability_selection,
+            stability_runs=self.stability_runs,
+            stability_fraction=self.stability_fraction,
+            stability_min_support=self.stability_min_support,
+            stability_jitter=self.stability_jitter,
+            rib_stability_runs=self.rib_stability_runs,
+            rib_min_support=self.rib_min_support,
+            stability_residual_subspaces=self.stability_residual_subspaces,
+            n_jobs=self.n_jobs,
         )
 
     def fit(
         self,
         X: Array | Sequence[Sequence[float]],
         y: Array | Sequence[Any] | None = None,
-    ) -> SplineEmbeddingTransformer:
+    ) -> SkeletalEmbeddingTransformer:
         points = check_array(X, ensure_2d=True, dtype=float)
         self._check_feature_count(points, reset=True)
         self.embedding_ = self._new_embedding().fit(points)
@@ -210,13 +285,15 @@ class SplineEmbeddingTransformer(TransformerMixin, BaseEstimator):
         return self._fit_feature_names_.copy()
 
 
-class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
+class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer):
     """Classify observations using route and deterministic normal features."""
 
     def __init__(
         self,
         estimator: Any | None = None,
         n_centroids: int = 32,
+        n_neighbors: int = 6,
+        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -229,13 +306,12 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         persistence_max_points: int = 60,
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
-        topology_neighbors: int = 6,
+        topology_neighbors: int | None = None,
         mutual_knn: bool = False,
         add_mst: bool = False,
         max_residual_dim: int = 0,
         residual_pca_bandwidth: float = 0.1,
         residual_subspace_smoothness: float = 0.0,
-        backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
         junction_scales: int | Sequence[float] = 6,
@@ -253,9 +329,35 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
+        use_mip: bool = True,
+        coverage_refinement: bool = False,
+        coverage_error_tolerance: float | None = None,
+        coverage_relative_tolerance: float | None = None,
+        coverage_quantile: float = 0.95,
+        coverage_max_iterations: int = 10,
+        coverage_max_ribs: int | None = None,
+        coverage_max_candidates_per_iteration: int = 20,
+        coverage_candidate_spacing: float | None = None,
+        coverage_min_error: float | None = None,
+        coverage_min_gain: float = 0.0,
+        coverage_length_penalty: float = 0.0,
+        coverage_rib_penalty: float = 0.0,
+        coverage_junction_penalty: float = 0.0,
+        coverage_selection: str = "greedy",
+        stability_selection: bool = False,
+        stability_runs: int = 30,
+        stability_fraction: float = 0.7,
+        stability_min_support: float = 0.75,
+        stability_jitter: float = 0.0,
+        rib_stability_runs: int | None = None,
+        rib_min_support: float = 0.6,
+        stability_residual_subspaces: bool = False,
+        n_jobs: int | None = None,
     ) -> None:
         super().__init__(
             n_centroids=n_centroids,
+            n_neighbors=n_neighbors,
+            initialization=initialization,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
             spline_control_mode=spline_control_mode,
@@ -274,7 +376,6 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             max_residual_dim=max_residual_dim,
             residual_pca_bandwidth=residual_pca_bandwidth,
             residual_subspace_smoothness=residual_subspace_smoothness,
-            backbone_initialization=backbone_initialization,
             detect_cycles=detect_cycles,
             detect_junctions=detect_junctions,
             junction_scales=junction_scales,
@@ -292,6 +393,30 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
             routing_resistance_weight=routing_resistance_weight,
             routing_current_weight=routing_current_weight,
             use_tangent_boundary_conditions=use_tangent_boundary_conditions,
+            use_mip=use_mip,
+            coverage_refinement=coverage_refinement,
+            coverage_error_tolerance=coverage_error_tolerance,
+            coverage_relative_tolerance=coverage_relative_tolerance,
+            coverage_quantile=coverage_quantile,
+            coverage_max_iterations=coverage_max_iterations,
+            coverage_max_ribs=coverage_max_ribs,
+            coverage_max_candidates_per_iteration=coverage_max_candidates_per_iteration,
+            coverage_candidate_spacing=coverage_candidate_spacing,
+            coverage_min_error=coverage_min_error,
+            coverage_min_gain=coverage_min_gain,
+            coverage_length_penalty=coverage_length_penalty,
+            coverage_rib_penalty=coverage_rib_penalty,
+            coverage_junction_penalty=coverage_junction_penalty,
+            coverage_selection=coverage_selection,
+            stability_selection=stability_selection,
+            stability_runs=stability_runs,
+            stability_fraction=stability_fraction,
+            stability_min_support=stability_min_support,
+            stability_jitter=stability_jitter,
+            rib_stability_runs=rib_stability_runs,
+            rib_min_support=rib_min_support,
+            stability_residual_subspaces=stability_residual_subspaces,
+            n_jobs=n_jobs,
         )
         self.estimator = estimator
 
@@ -299,7 +424,7 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         self,
         X: Array | Sequence[Sequence[float]],
         y: Array | Sequence[Any],
-    ) -> SplineEmbeddingClassifier:
+    ) -> SkeletalEmbeddingClassifier:
         points, target = check_X_y(X, y, ensure_2d=True, dtype=float, multi_output=True)
         super().fit(points)
         self.estimator_ = (
@@ -355,4 +480,4 @@ class SplineEmbeddingClassifier(ClassifierMixin, SplineEmbeddingTransformer):
         raise AttributeError("estimator does not provide decision_function or predict_proba")
 
 
-__all__ = ["SplineEmbeddingClassifier", "SplineEmbeddingTransformer"]
+__all__ = ["SkeletalEmbeddingClassifier", "SkeletalEmbeddingTransformer"]

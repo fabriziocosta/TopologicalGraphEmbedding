@@ -1,16 +1,14 @@
-# Sparse spline graph embeddings for noisy point clouds
+# Skeletal embeddings for noisy point clouds
 
 ## Abstract
 
 This work describes a spline-based representation for point clouds whose
-latent structure is approximately one-dimensional and may contain branches or
-cycles. The method constructs a sparse neighborhood graph, estimates local
-geometric and topological structure, selects a graph backbone, and fits smooth
-routes to its paths. Each observation is then assigned to an approximate
-nearest route coordinate and represented by its route identity, longitudinal
-parameter, projection, local tangent, and off-route residual. An optional
-smooth residual-PCA field adds a fixed number of transverse coordinates and a
-reconstruction error.
+latent structure may contain graph-like branches, cycles, or higher-dimensional
+manifold regions. The method constructs a sparse neighborhood graph, estimates
+stable topology and local geometry, selects a topology-driven backbone, and
+fits smooth splines. Smooth tangent-orthogonal residual-PCA fields add local
+manifold coordinates. When those coordinates do not meet a coverage target,
+adaptive stable ribs form a sparse geometric wire frame.
 
 Fitting is performed in the original feature space, after an optional affine
 standardization. Dimensionality-reduction methods and the schematic layout
@@ -262,10 +260,11 @@ subsampling for capped persistence. Numerical outputs may depend on installed
 SciPy or Ripser versions when optional backends are available; the selected
 backend is recorded by the fitted estimator.
 
-The representation is one-dimensional and does not model branch-specific
-density or uncertainty. Projection is not a full continuous optimization, and
-the inferred topology is an approximation controlled by graph construction,
-local geometric thresholds, persistence thresholds, and cycle limits. These
+The backbone targets persistent coarse topology; the rib-filled skeleton is a
+geometric coverage approximation and need not have the same cycle rank as the
+underlying manifold. Projection is not a full continuous optimization, and the
+inferred structure is controlled by graph construction, local geometric
+thresholds, persistence, coverage penalties, and stability settings. These
 parameters should therefore be reported with empirical results.
 
 The complete API, diagnostic attributes, backend behavior, and usage examples

@@ -12,12 +12,12 @@ from sklearn.datasets import (
     load_wine,
 )
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.visualization.plots import (
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.visualization.plots import (
     evaluate_route_target,
     plot_embedding_row,
 )
-from topological_graph_embedding.visualization.reduction import fit_reducer
+from skeletalembedding.visualization.reduction import fit_reducer
 
 
 def _sample_dataset(points, labels, n, random_state):
@@ -64,8 +64,8 @@ def fit_datasets(
     embeddings = {}
     summary = []
     for index, (name, (points, labels)) in enumerate(datasets.items()):
-        model = SplineGraphEmbedding(
-            backbone_initialization="topological",
+        model = SkeletalEmbedding(
+            initialization="skeletal",
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,

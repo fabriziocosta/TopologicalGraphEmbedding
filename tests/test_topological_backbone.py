@@ -5,15 +5,15 @@ import pytest
 from sklearn.base import clone
 from sklearn.datasets import make_circles, make_moons
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding._electrical import (
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding._electrical import (
     _effective_resistance,
     _kron_reduction,
 )
-from topological_graph_embedding._topology import _weighted_symmetric_knn_graph
-from topological_graph_embedding.datasets import generate_synthetic_datasets
-from topological_graph_embedding.sklearn import SplineEmbeddingTransformer
-from topological_graph_embedding.visualization.metro import MetroLayout
+from skeletalembedding._topology import _weighted_symmetric_knn_graph
+from skeletalembedding.datasets import generate_synthetic_datasets
+from skeletalembedding.sklearn import SkeletalEmbeddingTransformer
+from skeletalembedding.visualization.metro import MetroLayout
 
 
 @pytest.mark.parametrize(
@@ -30,11 +30,11 @@ def test_topological_backbone_preserves_synthetic_structure(
     name, cycles, junction_count, branch_count,
 ):
     points = generate_synthetic_datasets(n=120, noise=0.03, random_state=0)[name]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=16,
         max_cycles=5,
         random_state=0,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -55,10 +55,10 @@ def test_topological_backbone_preserves_synthetic_structure(
 
 def test_topological_electrical_diagnostics_and_kron_reduction():
     points = generate_synthetic_datasets(n=80, noise=0.02, random_state=1)["star"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=12,
         random_state=0,
-        backbone_initialization="topological",
+        initialization="skeletal",
         use_effective_resistance=True,
         use_electrical_flow=True,
         use_kron_reduction=True,
@@ -105,15 +105,15 @@ def test_mst_flag_augments_mutual_knn_edges_before_component_recording():
 
 
 def test_topological_parameters_propagate_through_sklearn_adapter():
-    estimator = SplineEmbeddingTransformer(
-        backbone_initialization="topological",
+    estimator = SkeletalEmbeddingTransformer(
+        initialization="skeletal",
         junction_scales=[1.0, 2.0, 3.0],
         use_effective_resistance=True,
         mutual_knn=True,
         add_mst=True,
     )
     cloned = clone(estimator)
-    assert cloned.get_params()["backbone_initialization"] == "topological"
+    assert cloned.get_params()["initialization"] == "skeletal"
     assert cloned.get_params()["junction_scales"] == [1.0, 2.0, 3.0]
     assert cloned.get_params()["use_effective_resistance"] is True
     assert cloned.get_params()["mutual_knn"] is True
@@ -122,19 +122,19 @@ def test_topological_parameters_propagate_through_sklearn_adapter():
 
 def test_topological_parameter_validation():
     with pytest.raises(ValueError):
-        SplineGraphEmbedding(backbone_initialization="unknown")
+        SkeletalEmbedding(initialization="unknown")
     with pytest.raises(ValueError):
-        SplineGraphEmbedding(junction_inner_fraction=1.0)
+        SkeletalEmbedding(junction_inner_fraction=1.0)
     with pytest.raises(ValueError):
-        SplineGraphEmbedding(max_branch_angle_degrees=0.0)
+        SkeletalEmbedding(max_branch_angle_degrees=0.0)
 
 
 def test_topological_junction_routes_are_stable_across_kmeans_seeds():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["star"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         random_state=2,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     assert len(model.junctions_) == 1
@@ -148,10 +148,10 @@ def test_topological_binary_tree_produces_a_valid_embedding():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)[
         "binary-tree"
     ]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         random_state=5,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     result = model.transform(points)
@@ -162,10 +162,10 @@ def test_topological_binary_tree_produces_a_valid_embedding():
 def test_topological_star_keeps_one_junction_across_kmeans_seeds():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["star"]
     for random_state in range(8):
-        model = SplineGraphEmbedding(
+        model = SkeletalEmbedding(
             n_centroids=32,
             random_state=random_state,
-            backbone_initialization="topological",
+            initialization="skeletal",
         ).fit(points)
 
         assert len(model.junctions_) == 1
@@ -182,12 +182,12 @@ def test_topological_disconnected_cycles_keep_separate_closed_routes():
         noise=0.045,
         random_state=1,
     )
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         max_cycles=4,
         spline_smoothing=0.1,
         random_state=11,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     assert model.component_cycle_counts_ == [1, 1]
@@ -200,13 +200,13 @@ def test_topological_disconnected_cycles_keep_separate_closed_routes():
 
 def test_topological_disconnected_moons_use_complete_arc_endpoints():
     points, _ = make_moons(n_samples=500, noise=0.07, random_state=0)
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=45,
         persistence_threshold=4.0,
         spline_smoothing=0.1,
         max_cycles=4,
         random_state=10,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     curves = [spline.samples * model.scale_ + model.mean_ for spline in model.routes_]
@@ -222,13 +222,13 @@ def test_topological_disconnected_cycles_keep_full_loop_spans():
         noise=0.045,
         random_state=1,
     )
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=45,
         max_cycles=4,
         persistence_threshold=4.0,
         spline_smoothing=0.1,
         random_state=11,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -241,10 +241,10 @@ def test_topological_disconnected_cycles_keep_full_loop_spans():
 
 def test_topological_single_loop_spline_covers_both_sides_of_cycle():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["circle"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         random_state=3,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     samples = model.routes_[0].samples
@@ -258,12 +258,12 @@ def test_topological_single_loop_spline_covers_both_sides_of_cycle():
 
 def test_topological_dense_single_loop_is_not_split_by_coarse_tree():
     points = generate_synthetic_datasets(n=1000, noise=0.045, random_state=0)["circle"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=50,
         random_state=0,
         persistence_threshold=4.0,
         persistence_max_points=60,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     assert model.realized_cycle_count_ == 1
@@ -275,10 +275,10 @@ def test_topological_dense_single_loop_is_not_split_by_coarse_tree():
 
 def test_topological_line_spline_is_linear_in_original_metric():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["line"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         random_state=0,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     samples = model.routes_[0].samples
@@ -291,10 +291,10 @@ def test_topological_line_spline_is_linear_in_original_metric():
 
 def test_topological_shared_cycles_use_opposite_metro_sides():
     points = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)["figure-eight"]
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=32,
         random_state=0,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
     layout = MetroLayout(model).fit(result)
@@ -311,7 +311,7 @@ def test_topological_shared_cycles_use_opposite_metro_sides():
 
 
 def test_topological_complex_workflow_keeps_cycle_backbones_closed():
-    from topological_graph_embedding.datasets import (
+    from skeletalembedding.datasets import (
         noisy_hypercube,
         noisy_polygon_rays_circles,
     )
@@ -327,13 +327,13 @@ def test_topological_complex_workflow_keeps_cycle_backbones_closed():
     for points in clouds:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
-            model = SplineGraphEmbedding(
+            model = SkeletalEmbedding(
                 n_centroids=32,
                 max_cycles=5,
                 random_state=0,
                 persistence_threshold=4.0,
                 persistence_max_points=300,
-                backbone_initialization="topological",
+                initialization="skeletal",
             ).fit(points)
         result = model.transform(points)
         assert model.realized_cycle_count_ == model.requested_cycle_count_
@@ -342,7 +342,7 @@ def test_topological_complex_workflow_keeps_cycle_backbones_closed():
 
 
 def test_topological_hypercube_recovers_all_corners_and_faces():
-    from topological_graph_embedding.datasets import noisy_hypercube
+    from skeletalembedding.datasets import noisy_hypercube
 
     points = noisy_hypercube(
         n=1000,
@@ -350,13 +350,13 @@ def test_topological_hypercube_recovers_all_corners_and_faces():
         noise=0.055,
         rng=np.random.default_rng(7),
     )
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=50,
         max_cycles=5,
         random_state=1,
         persistence_threshold=4.0,
         persistence_max_points=300,
-        backbone_initialization="topological",
+        initialization="skeletal",
     ).fit(points)
 
     assert model.hypercube_dimension_ == 3

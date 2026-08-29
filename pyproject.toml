@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "topological-graph-embedding"
-version = "0.1.0"
-description = "Smooth spline graph embeddings for noisy point clouds"
+name = "skeletal-embedding"
+version = "0.2.0"
+description = "Sparse topology-aware skeletal embeddings for noisy point clouds"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -32,9 +32,10 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["topological_graph_embedding*"]
+where = ["src"]
+include = ["skeletalembedding*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = "-ra"

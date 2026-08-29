@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.datasets import generate_synthetic_datasets
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.datasets import generate_synthetic_datasets
 
 
 def run(
@@ -32,7 +32,7 @@ def run(
     rows: list[dict[str, object]] = []
     for index, (name, points) in enumerate(datasets.items()):
         is_binary_tree = name == "binary-tree"
-        model = SplineGraphEmbedding(
+        model = SkeletalEmbedding(
             n_centroids=64 if is_binary_tree else 32,
             persistence_threshold=None,
             spline_smoothing=0.02,

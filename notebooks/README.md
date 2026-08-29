@@ -3,7 +3,7 @@
 `visualize_synthetic_distributions.ipynb` runs the model on seven 2D
 synthetic distributions (six easy and one complex) plus a noisy 3D hypercube.
 The notebook is a thin
-wrapper around `topological_graph_embedding.visualization.workflows.synthetic`:
+wrapper around `skeletalembedding.visualization.workflows.synthetic`:
 edit its parameters and rerun the function call. The hypercube dimension is controlled by `HYPERCUBE_DIM`
 (default `3`), the polygon dataset's number of sides by `POLYGON_SIDES`
 (default `5`), and the complete binary tree's root-to-leaf depth by
@@ -11,9 +11,9 @@ edit its parameters and rerun the function call. The hypercube dimension is cont
 `STAR_BRANCHES` (default `4`). The hypercube is displayed through a 2D PCA
 projection.
 
-Notebook workflows use `backbone_initialization="topological"` explicitly.
+Notebook workflows use `initialization="skeletal"` explicitly.
 This keeps notebook figures on the topology-aware initialization path even
-though the library estimator retains `"coarsen"` as its backward-compatible
+though the library estimator retains `"legacy_coarsen"` as its backward-compatible
 default. The workflow wrappers also silence the expected constraint-warning
 when a noisy interactive refit cannot realize every requested incidence;
 direct estimator use still exposes that diagnostic normally.
@@ -81,14 +81,14 @@ jupyter notebook notebooks/visualize_synthetic_distributions.ipynb
 The notebook saves rendered figures under `notebooks/figures/` when executed.
 
 Shared plotting logic is part of the installed package under
-`topological_graph_embedding.visualization`: `plots.py` contains the reusable
+`skeletalembedding.visualization`: `plots.py` contains the reusable
 `plot_embedding_row` four-panel renderer, `metro.py` contains the schematic
 layout, `interactive.py` contains the Plotly view, and
 `workflows/interactive.py` contains the shared notebook control panel. The
 metro-map point panel hides junction and endpoint markers by default; pass
 `show_metro_nodes=True` to display them.
 
-The notebooks import the installed `topological_graph_embedding` package. The
+The notebooks import the installed `skeletalembedding` package. The
 notebook bootstrap adds the repository root to the import path for local
 development, but the package is the sole source of implementation code.
 
@@ -99,8 +99,8 @@ jupyter notebook notebooks/visualize_sklearn_toy_datasets.ipynb
 # or, from notebooks/: jupyter notebook visualize_sklearn_toy_datasets.ipynb
 ```
 
-For reusable sklearn pipelines, `topological_graph_embedding.sklearn` provides
-`SplineEmbeddingTransformer` and `SplineEmbeddingClassifier`. The classifier combines
+For reusable sklearn pipelines, `skeletalembedding.sklearn` provides
+`SkeletalEmbeddingTransformer` and `SkeletalEmbeddingClassifier`. The classifier combines
 spline identity, longitudinal position, and residual coordinates in the local
 hyperplane perpendicular to each spline with a configurable downstream
 estimator passed through `estimator=`; its default is a random forest. The high-dimensional dataset view

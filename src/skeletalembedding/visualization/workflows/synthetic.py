@@ -7,12 +7,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.decomposition import PCA
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.datasets import (
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.datasets import (
     generate_synthetic_datasets,
     noisy_hypercube,
 )
-from topological_graph_embedding.visualization.plots import plot_embedding_row
+from skeletalembedding.visualization.plots import plot_embedding_row
 
 
 def build_datasets(
@@ -58,8 +58,8 @@ def fit_datasets(
 
     for index, (name, points) in enumerate(datasets.items()):
         is_binary_tree = name == 'binary-tree'
-        model = SplineGraphEmbedding(
-            backbone_initialization="coarsen" if is_binary_tree else "topological",
+        model = SkeletalEmbedding(
+            initialization="legacy_coarsen" if is_binary_tree else "skeletal",
             n_centroids=max(n_centroids, 64) if is_binary_tree else n_centroids,
             persistence_threshold=persistence_threshold,
             persistence_max_points=persistence_max_points,

@@ -2,9 +2,9 @@ import numpy as np
 from sklearn.base import clone
 from sklearn.linear_model import LogisticRegression
 
-from topological_graph_embedding.sklearn import (
-    SplineEmbeddingClassifier,
-    SplineEmbeddingTransformer,
+from skeletalembedding.sklearn import (
+    SkeletalEmbeddingClassifier,
+    SkeletalEmbeddingTransformer,
 )
 
 
@@ -17,7 +17,7 @@ def _points():
 
 def test_transformer_clone_feature_names_and_typed_result():
     points, _ = _points()
-    estimator = SplineEmbeddingTransformer(n_centroids=8, random_state=0)
+    estimator = SkeletalEmbeddingTransformer(n_centroids=8, random_state=0)
     assert clone(estimator).get_params() == estimator.get_params()
     estimator.fit(points)
     transformed = estimator.transform(points)
@@ -31,7 +31,7 @@ def test_transformer_clone_feature_names_and_typed_result():
 def test_classifier_delegates_to_estimator_and_uses_estimator_parameter():
     points, labels = _points()
     downstream = LogisticRegression(max_iter=200)
-    model = SplineEmbeddingClassifier(
+    model = SkeletalEmbeddingClassifier(
         estimator=downstream, n_centroids=8, random_state=0,
     ).fit(points, labels)
     assert model.estimator is downstream

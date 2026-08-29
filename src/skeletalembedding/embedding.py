@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import inspect
 import warnings
 from collections.abc import Sequence
 from itertools import combinations, pairwise
@@ -22,11 +23,14 @@ from ._local_geometry import (
     _estimate_local_tangents,
     _tangent_inconsistency,
 )
+from ._optimization import select_backbone_mip
 from ._residual_pca import attach_residual_pca, fit_residual_pca
+from ._ribs import propose_ribs, select_ribs
 from ._topology import (
     CandidatePath,
     EndpointRegion,
     JunctionRegion,
+    PersistentCycle,
     _as_point_cloud,
     _cycle_anchor_vertices,
     _estimate_local_topology,
@@ -91,12 +95,14 @@ def _geodesic_diameter_endpoints(
         second = min(allowed - {first})
     return first, second
 
-class SplineGraphEmbedding:
-    """Fit a smooth graph of spline routes to a point cloud."""
+class SkeletalEmbedding:
+    """Fit a stable nonlinear backbone, residual fields, and coverage ribs."""
 
     def __init__(
         self,
         n_centroids: int = 32,
+        n_neighbors: int = 6,
+        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -109,13 +115,12 @@ class SplineGraphEmbedding:
         persistence_max_points: int = 60,
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
-        topology_neighbors: int = 6,
+        topology_neighbors: int | None = None,
         mutual_knn: bool = False,
         add_mst: bool = False,
         max_residual_dim: int = 0,
         residual_pca_bandwidth: float = 0.1,
         residual_subspace_smoothness: float = 0.0,
-        backbone_initialization: str = "coarsen",
         detect_cycles: bool = True,
         detect_junctions: bool = True,
         junction_scales: int | Sequence[float] = 6,
@@ -133,6 +138,30 @@ class SplineGraphEmbedding:
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
+        use_mip: bool = True,
+        coverage_refinement: bool = False,
+        coverage_error_tolerance: float | None = None,
+        coverage_relative_tolerance: float | None = None,
+        coverage_quantile: float = 0.95,
+        coverage_max_iterations: int = 10,
+        coverage_max_ribs: int | None = None,
+        coverage_max_candidates_per_iteration: int = 20,
+        coverage_candidate_spacing: float | None = None,
+        coverage_min_error: float | None = None,
+        coverage_min_gain: float = 0.0,
+        coverage_length_penalty: float = 0.0,
+        coverage_rib_penalty: float = 0.0,
+        coverage_junction_penalty: float = 0.0,
+        coverage_selection: str = "greedy",
+        stability_selection: bool = False,
+        stability_runs: int = 30,
+        stability_fraction: float = 0.7,
+        stability_min_support: float = 0.75,
+        stability_jitter: float = 0.0,
+        rib_stability_runs: int | None = None,
+        rib_min_support: float = 0.6,
+        stability_residual_subspaces: bool = False,
+        n_jobs: int | None = None,
     ) -> None:
         if n_centroids < 3:
             raise ValueError("n_centroids must be at least 3")
@@ -142,8 +171,10 @@ class SplineGraphEmbedding:
             raise ValueError("persistence_max_points must be at least 1")
         if spline_samples_per_node < 1:
             raise ValueError("spline_samples_per_node must be at least 1")
-        if topology_neighbors < 2:
+        if topology_neighbors is not None and topology_neighbors < 2:
             raise ValueError("topology_neighbors must be at least 2")
+        if n_neighbors < 2:
+            raise ValueError("n_neighbors must be at least 2")
         if isinstance(max_residual_dim, bool) or not isinstance(max_residual_dim, (int, np.integer)):
             raise ValueError(  # noqa: TRY004
                 "max_residual_dim must be a non-negative integer"
@@ -154,8 +185,8 @@ class SplineGraphEmbedding:
             raise ValueError("residual_pca_bandwidth must be positive and finite")
         if residual_subspace_smoothness < 0.0 or not np.isfinite(residual_subspace_smoothness):
             raise ValueError("residual_subspace_smoothness must be finite and non-negative")
-        if backbone_initialization not in {"coarsen", "topological"}:
-            raise ValueError("backbone_initialization must be 'coarsen' or 'topological'")
+        if initialization not in {"skeletal", "legacy_coarsen"}:
+            raise ValueError("initialization must be 'skeletal' or 'legacy_coarsen'")
         if spline_control_mode not in {"support", "backbone"}:
             raise ValueError("spline_control_mode must be 'support' or 'backbone'")
         if local_pca_neighbors < 2:
@@ -189,7 +220,39 @@ class SplineGraphEmbedding:
             merge_junction_distance < 0 or not np.isfinite(merge_junction_distance)
         ):
             raise ValueError("merge_junction_distance must be finite and non-negative")
+        if coverage_error_tolerance is not None and (
+            coverage_error_tolerance < 0 or not np.isfinite(coverage_error_tolerance)
+        ):
+            raise ValueError("coverage_error_tolerance must be finite and non-negative")
+        if coverage_relative_tolerance is not None and (
+            coverage_relative_tolerance < 0 or not np.isfinite(coverage_relative_tolerance)
+        ):
+            raise ValueError("coverage_relative_tolerance must be finite and non-negative")
+        if not 0.0 < coverage_quantile <= 1.0:
+            raise ValueError("coverage_quantile must be in (0, 1]")
+        if coverage_max_iterations < 1:
+            raise ValueError("coverage_max_iterations must be at least 1")
+        if coverage_max_ribs is not None and coverage_max_ribs < 0:
+            raise ValueError("coverage_max_ribs must be non-negative")
+        if coverage_max_candidates_per_iteration < 1:
+            raise ValueError("coverage_max_candidates_per_iteration must be at least 1")
+        coverage_values = (
+            coverage_min_gain, coverage_length_penalty, coverage_rib_penalty,
+            coverage_junction_penalty, rib_min_support,
+        )
+        if any(value < 0 or not np.isfinite(value) for value in coverage_values):
+            raise ValueError("coverage penalties and supports must be finite and non-negative")
+        if coverage_selection not in {"greedy", "mip"}:
+            raise ValueError("coverage_selection must be 'greedy' or 'mip'")
+        if stability_runs < 1 or not 0.0 < stability_fraction <= 1.0:
+            raise ValueError("stability_runs must be positive and stability_fraction must be in (0, 1]")
+        if not 0.0 <= stability_min_support <= 1.0:
+            raise ValueError("stability_min_support must be in [0, 1]")
+        if stability_jitter < 0 or not np.isfinite(stability_jitter):
+            raise ValueError("stability_jitter must be finite and non-negative")
         self.n_centroids = int(n_centroids)
+        self.n_neighbors = int(n_neighbors)
+        self.initialization = str(initialization)
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = float(spline_smoothing)
         self.spline_control_mode = str(spline_control_mode)
@@ -202,13 +265,14 @@ class SplineGraphEmbedding:
         self.persistence_max_points = int(persistence_max_points)
         self.spline_samples_per_node = int(spline_samples_per_node)
         self.linear_structure_tolerance = float(linear_structure_tolerance)
-        self.topology_neighbors = int(topology_neighbors)
+        self.topology_neighbors = topology_neighbors
+        self.topology_neighbors_ = int(n_neighbors if topology_neighbors is None else topology_neighbors)
         self.mutual_knn = bool(mutual_knn)
         self.add_mst = bool(add_mst)
         self.max_residual_dim = int(max_residual_dim)
         self.residual_pca_bandwidth = float(residual_pca_bandwidth)
         self.residual_subspace_smoothness = float(residual_subspace_smoothness)
-        self.backbone_initialization = str(backbone_initialization)
+        self.initialization = str(initialization)
         self.detect_cycles = bool(detect_cycles)
         self.detect_junctions = bool(detect_junctions)
         self.junction_scales = junction_scales
@@ -226,9 +290,33 @@ class SplineGraphEmbedding:
         self.routing_resistance_weight = float(routing_resistance_weight)
         self.routing_current_weight = float(routing_current_weight)
         self.use_tangent_boundary_conditions = bool(use_tangent_boundary_conditions)
+        self.use_mip = bool(use_mip)
+        self.coverage_refinement = bool(coverage_refinement)
+        self.coverage_error_tolerance = coverage_error_tolerance
+        self.coverage_relative_tolerance = coverage_relative_tolerance
+        self.coverage_quantile = float(coverage_quantile)
+        self.coverage_max_iterations = int(coverage_max_iterations)
+        self.coverage_max_ribs = None if coverage_max_ribs is None else int(coverage_max_ribs)
+        self.coverage_max_candidates_per_iteration = int(coverage_max_candidates_per_iteration)
+        self.coverage_candidate_spacing = coverage_candidate_spacing
+        self.coverage_min_error = coverage_min_error
+        self.coverage_min_gain = float(coverage_min_gain)
+        self.coverage_length_penalty = float(coverage_length_penalty)
+        self.coverage_rib_penalty = float(coverage_rib_penalty)
+        self.coverage_junction_penalty = float(coverage_junction_penalty)
+        self.coverage_selection = str(coverage_selection)
+        self.stability_selection = bool(stability_selection)
+        self.stability_runs = int(stability_runs)
+        self.stability_fraction = float(stability_fraction)
+        self.stability_min_support = float(stability_min_support)
+        self.stability_jitter = float(stability_jitter)
+        self.rib_stability_runs = rib_stability_runs
+        self.rib_min_support = float(rib_min_support)
+        self.stability_residual_subspaces = bool(stability_residual_subspaces)
+        self.n_jobs = n_jobs
         self._fitted = False
 
-    def fit(self, X: Array | Sequence[Sequence[float]]) -> SplineGraphEmbedding:
+    def fit(self, X: Array | Sequence[Sequence[float]]) -> SkeletalEmbedding:
         original = _as_point_cloud(X)
         if original.shape[0] < 3:
             raise ValueError(
@@ -254,7 +342,7 @@ class SplineGraphEmbedding:
         self.normalized_persistence_diagram_ = _normalize_persistence_diagram(
             self.persistence_diagram_, self.local_scale_
         )
-        if self.backbone_initialization == "topological":
+        if self.initialization == "skeletal":
             # Topological mode uses scale-free persistence.  The legacy mode
             # retains its historical distance-unit threshold semantics.
             threshold = 3.0 if self.persistence_threshold is None else float(self.persistence_threshold)
@@ -273,9 +361,22 @@ class SplineGraphEmbedding:
             self.persistent_cycle_count_ = int(np.sum(significant))
         else:
             self.persistent_cycle_count_ = 0
+        self.persistent_cycles_ = [
+            PersistentCycle(
+                float(birth),
+                float(death),
+                float(death - birth),
+                representative=None,
+            )
+            for birth, death in np.asarray(diagram, dtype=float)[
+                np.isfinite(np.asarray(diagram, dtype=float)).all(axis=1)
+                & ((np.asarray(diagram, dtype=float)[:, 1] - np.asarray(diagram, dtype=float)[:, 0]) >= self.persistence_threshold_)
+            ]
+        ]
+        self.cycle_support_ = np.ones(len(self.persistent_cycles_), dtype=float)
         self.cycle_count_ = self.persistent_cycle_count_
         self.requested_cycle_count_ = min(self.max_cycles, self.persistent_cycle_count_)
-        if self.backbone_initialization == "topological" and not self.detect_cycles:
+        if self.initialization == "skeletal" and not self.detect_cycles:
             self.requested_cycle_count_ = 0
 
         self.centroids_ = _kmeans(points, self.n_centroids, self.random_state)
@@ -299,7 +400,7 @@ class SplineGraphEmbedding:
         else:
             self.linear_center_ = None
             self.linear_direction_ = None
-        if self.backbone_initialization == "topological" and self.linear_structure_:
+        if self.initialization == "skeletal" and self.linear_structure_:
             # A noisy line can carry a small numerical H1 bar in a subsample;
             # its one-dimensional geometry is a stronger constraint than that
             # artifact and must not create a cycle anchor.
@@ -309,7 +410,7 @@ class SplineGraphEmbedding:
         self.central_junction_center_ = None
         self.face_cycle_count_ = 0
         self.hypercube_dimension_ = None
-        if self.backbone_initialization == "topological":
+        if self.initialization == "skeletal":
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
             self.backbone_paths_ = backbone_paths
             self.merge_junction_distance_ = 0.0
@@ -331,11 +432,13 @@ class SplineGraphEmbedding:
             self.merge_junction_distance_ = float(merge_distance)
             graph = _merge_nearby_junctions(graph, merge_distance)
             self.backbone_paths_ = None
+        if not hasattr(self, "mip_status_"):
+            self.mip_status_ = "not_applicable"
         self.landmark_graph_ = graph
         self.backbone_graph_ = graph
         if self.backbone_paths_ is None:
             self.topology_candidate_edges_ = _symmetric_knn_edges(
-                self.landmark_graph_, self.topology_neighbors,
+                self.landmark_graph_, self.topology_neighbors_,
             )
         else:
             self.topology_candidate_edges_ = set()
@@ -447,6 +550,11 @@ class SplineGraphEmbedding:
         self.splines_ = self.routes_
         centerline_result = self._project_centerline(original)
         fit_residual_pca(self, points, centerline_result)
+        self._initialize_skeleton_metadata()
+        self._refine_coverage(original, points)
+        self._initialize_skeleton_metadata()
+        self._run_stability_selection(original)
+        self._fit_final_diagnostics(original, points)
         self._fitted = True
         return self
 
@@ -458,7 +566,7 @@ class SplineGraphEmbedding:
         """Infer a constrained landmark graph from the dense routing substrate."""
         routing_graph, local_scales = _weighted_symmetric_knn_graph(
             points,
-            self.topology_neighbors,
+            self.topology_neighbors_,
             mutual_knn=self.mutual_knn,
             add_mst=self.add_mst,
         )
@@ -557,8 +665,7 @@ class SplineGraphEmbedding:
                 self.face_cycle_count_ = face_count
                 self.hypercube_dimension_ = hypercube_dimension
         if (
-            not junctions
-            and not self.linear_structure_
+            not self.linear_structure_
             and len(routing_components) > 1
             and self.requested_cycle_count_ == 0
         ):
@@ -568,6 +675,10 @@ class SplineGraphEmbedding:
             # can look like an endpoint at one scale.  Use the weighted graph
             # diameter of each natural component instead, which returns the
             # actual two terminals of every open arc.
+            # A disconnected open component cannot contain a junction that
+            # connects the components.  Annulus overlaps between nearby
+            # strands are therefore treated as false local branch votes.
+            junctions = []
             consolidated: list[EndpointRegion] = []
             for component in routing_components:
                 left, right = _geodesic_diameter_endpoints(routing_graph, component)
@@ -1549,6 +1660,27 @@ class SplineGraphEmbedding:
                     candidate.branch_end,
                 )
 
+        mip_selected, mip_status = select_backbone_mip(
+            candidates,
+            specifications,
+            self.requested_cycle_count_,
+            use_mip=(
+                self.use_mip
+                and self.initialization == "skeletal"
+                and (
+                    self.requested_cycle_count_ > 0
+                    or any(specification["kind"] == "junction" for specification in specifications)
+                )
+            ),
+        )
+        self.mip_status_ = mip_status
+        if mip_status == "optimal":
+            selected = mip_selected
+            degree = np.zeros(len(specifications), dtype=int)
+            for candidate in selected.values():
+                degree[candidate.start_landmark] += 1
+                degree[candidate.end_landmark] += 1
+
         for key, candidate in selected.items():
             graph.add_edge(key[0], key[1], candidate.length)
         self.landmark_vertex_ids_ = np.asarray(
@@ -1766,6 +1898,278 @@ class SplineGraphEmbedding:
         _, left, right, direct = best
         return left, right, direct
 
+    def _initialize_skeleton_metadata(self) -> None:
+        """Expose the typed structural view shared by backbone and ribs."""
+        if not hasattr(self, "backbone_element_count_"):
+            self.backbone_element_count_ = len(self.routes_)
+            self.rib_paths_ = []
+            self.rib_support_ = []
+            self.rib_stability_ = []
+        rib_count = max(0, len(self.routes_) - self.backbone_element_count_)
+        self.element_types_ = (
+            ["backbone"] * self.backbone_element_count_
+            + ["rib"] * rib_count
+        )
+        self.element_support_ = [1.0] * self.backbone_element_count_ + list(
+            getattr(self, "rib_support_", [])
+        )
+        self.route_support_ = np.asarray(self.element_support_, dtype=float)
+        self.element_levels_ = (
+            ["backbone"] * self.backbone_element_count_
+            + ["major_rib" if support >= 0.75 else "minor_rib"
+               for support in getattr(self, "rib_support_", [])]
+        )
+        for spline, element_type, level in zip(
+            self.routes_, self.element_types_, self.element_levels_
+        ):
+            spline.element_type = element_type
+            spline.level = level
+        self.backbone_cycle_rank_ = int(self.backbone_graph_.cycle_rank())
+        self.rib_graph_ = getattr(self, "rib_graph_", _LandmarkGraph())
+        self.skeleton_graph_ = self.backbone_graph_.copy()
+        for edge in self.skeleton_graph_.edges:
+            self.skeleton_graph_.set_edge_metadata(
+                *edge, element_type="backbone", level="backbone", support=1.0
+            )
+        for node, coordinate in self.rib_graph_.nodes.items():
+            if node not in self.skeleton_graph_.nodes:
+                self.skeleton_graph_.nodes[node] = coordinate.copy()
+        for edge, weight in self.rib_graph_.edges.items():
+            self.skeleton_graph_.edges[edge] = weight
+            self.skeleton_graph_.set_edge_metadata(
+                *edge, element_type="rib", level="rib", support=1.0
+            )
+        self.skeleton_cycle_rank_ = int(self.skeleton_graph_.cycle_rank())
+        self.element_types = list(self.element_types_)
+        self.junction_types_ = {
+            int(getattr(region, "node_id", index)): "intrinsic"
+            for index, region in enumerate(getattr(self, "junctions_", []))
+        }
+        self.junction_types_.update({
+            index: "coverage"
+            for index, _ in enumerate(getattr(self, "coverage_intersections_", []), start=len(self.junction_types_))
+        })
+
+    def _coverage_tolerance(self, errors: Array) -> float:
+        if self.coverage_error_tolerance is not None:
+            return float(self.coverage_error_tolerance)
+        if self.coverage_relative_tolerance is not None:
+            return float(self.coverage_relative_tolerance) * max(self.local_scale_, 1e-12)
+        return 3.0 * max(self.local_scale_, 1e-12)
+
+    def _refit_after_ribs(self, original: Array, points: Array) -> None:
+        self.normal_frame_grids_ = [
+            _fit_normal_frame_grid(spline) for spline in self.routes_
+        ]
+        self.splines_ = self.routes_
+        centerline = self._project_centerline(original)
+        fit_residual_pca(self, points, centerline)
+
+    def _refine_coverage(self, original: Array, points: Array) -> None:
+        """Iteratively add useful ribs after local residual reconstruction."""
+        self.coverage_history_ = []
+        self.coverage_iterations_ = 0
+        self.rib_candidates_ = []
+        self.rib_graph_ = _LandmarkGraph()
+        self.coverage_intersections_ = []
+        if not self.coverage_refinement:
+            return
+
+        for iteration in range(self.coverage_max_iterations):
+            centerline = self._project_centerline(original)
+            result = attach_residual_pca(self, original, points, centerline)
+            errors = np.asarray(result.unexplained_residual_norm, dtype=float)
+            tolerance = self._coverage_tolerance(errors)
+            quantile_error = float(np.quantile(errors, self.coverage_quantile))
+            self.coverage_tolerance_ = tolerance
+            self.coverage_history_.append({
+                "iteration": iteration,
+                "quantile_error": quantile_error,
+                "max_error": float(np.max(errors)) if len(errors) else 0.0,
+                "tolerance": tolerance,
+                "rib_count": len(self.rib_paths_),
+            })
+            self.coverage_iterations_ = iteration + 1
+            if quantile_error <= tolerance:
+                break
+            if (
+                self.coverage_max_ribs is not None
+                and len(self.rib_paths_) >= self.coverage_max_ribs
+            ):
+                break
+            candidates = propose_ribs(
+                self,
+                points,
+                result,
+                max_candidates=self.coverage_max_candidates_per_iteration,
+            )
+            if self.coverage_min_error is not None:
+                candidates = [
+                    candidate for candidate in candidates
+                    if errors[candidate.seed_index] >= self.coverage_min_error
+                ]
+            self.rib_candidates_.extend(candidates)
+            selected = select_ribs(
+                candidates,
+                max_ribs=(
+                    None if self.coverage_max_ribs is None else
+                    self.coverage_max_ribs - len(self.rib_paths_)
+                ),
+                min_gain=self.coverage_min_gain,
+                length_penalty=self.coverage_length_penalty,
+                rib_penalty=self.coverage_rib_penalty,
+                junction_penalty=self.coverage_junction_penalty,
+                selection=self.coverage_selection,
+            )
+            if not selected:
+                break
+            for candidate in selected:
+                self.routes_.append(candidate.spline)
+                self.route_chains_.append({
+                    "nodes": [],
+                    "closed": False,
+                    "points": candidate.points,
+                    "spline_points": candidate.points,
+                    "element_type": "rib",
+                })
+                self.rib_paths_.append(candidate.points.copy())
+                self.rib_support_.append(float(candidate.support))
+                self.rib_stability_.append(float(candidate.stability))
+                start_id = max(
+                    [*self.backbone_graph_.nodes, *self.rib_graph_.nodes, -1]
+                ) + 1
+                end_id = start_id + 1
+                self.rib_graph_.nodes[start_id] = candidate.points[0].copy()
+                self.rib_graph_.nodes[end_id] = candidate.points[-1].copy()
+                if not np.allclose(candidate.points[0], candidate.points[-1]):
+                    self.rib_graph_.add_edge(start_id, end_id, float(
+                        np.sum(np.linalg.norm(np.diff(candidate.points, axis=0), axis=1))
+                    ))
+                    for node, coordinate in self.backbone_graph_.nodes.items():
+                        self.rib_graph_.nodes.setdefault(int(node), coordinate.copy())
+                    for endpoint_id in (start_id, end_id):
+                        nearest = min(
+                            self.backbone_graph_.nodes,
+                            key=lambda node: np.linalg.norm(
+                                self.backbone_graph_.nodes[node]
+                                - self.rib_graph_.nodes[endpoint_id]
+                            ),
+                        )
+                        self.rib_graph_.add_edge(
+                            endpoint_id,
+                            int(nearest),
+                            float(np.linalg.norm(
+                                self.rib_graph_.nodes[endpoint_id]
+                                - self.backbone_graph_.nodes[int(nearest)]
+                            )),
+                        )
+                    self.coverage_intersections_.append({
+                        "element_ids": (self.backbone_element_count_, len(self.routes_)),
+                        "junction_type": "coverage",
+                        "seed_index": candidate.seed_index,
+                    })
+            self._refit_after_ribs(original, points)
+        self._initialize_skeleton_metadata()
+
+    def _fit_final_diagnostics(self, original: Array, points: Array) -> None:
+        """Cache the final decomposition in estimator-level fitted fields."""
+        centerline = self._project_centerline(original)
+        result = attach_residual_pca(self, original, points, centerline)
+        self.centerline_residual_ = np.asarray(result.residual, dtype=float)
+        self.centerline_residual_norm_ = np.asarray(result.residual_norm, dtype=float)
+        self.residual_coordinates_ = np.asarray(result.residual_coordinates, dtype=float)
+        self.reconstruction_ = np.asarray(result.reconstructed, dtype=float)
+        self.post_pca_residual_ = np.asarray(result.unexplained_residual, dtype=float)
+        self.post_pca_residual_norm_ = np.asarray(result.unexplained_residual_norm, dtype=float)
+        self.reconstruction_error_ = float(np.mean(self.post_pca_residual_norm_ ** 2))
+        self.stability_summary_ = getattr(self, "stability_summary_", {
+            "enabled": False,
+            "runs": 0,
+            "min_support": self.stability_min_support,
+        })
+        self.persistent_cycle_count_ = int(getattr(self, "persistent_cycle_count_", 0))
+        self.persistent_cycle_count = self.persistent_cycle_count_
+
+    def _run_stability_selection(self, original: Array) -> None:
+        """Estimate structural support with subsamples without averaging fits."""
+        self.junction_support_ = np.ones(len(getattr(self, "junctions_", [])), dtype=float)
+        self.endpoint_support_ = np.ones(len(getattr(self, "endpoints_", [])), dtype=float)
+        self.route_support_ = np.asarray(
+            [1.0] * len(getattr(self, "routes_", [])), dtype=float
+        )
+        if not self.stability_selection:
+            self.stability_summary_ = {
+                "enabled": False,
+                "runs": 0,
+                "min_support": self.stability_min_support,
+            }
+            return
+        rng = np.random.default_rng(self.random_state)
+        cycle_hits = np.zeros(len(self.persistent_cycles_), dtype=float)
+        junction_counts: list[int] = []
+        route_counts: list[int] = []
+        run_count = int(self.stability_runs)
+        sample_size = max(3, int(np.ceil(self.stability_fraction * len(original))))
+        for run in range(run_count):
+            indices = rng.choice(len(original), size=sample_size, replace=False)
+            sample = np.asarray(original[indices], dtype=float).copy()
+            if self.stability_jitter > 0.0:
+                scale = max(self.local_scale_, 1e-12) * self.stability_jitter
+                sample += rng.normal(0.0, scale, size=sample.shape)
+            try:
+                probe = SkeletalEmbedding(
+                    n_centroids=min(self.n_centroids, len(sample)),
+                    n_neighbors=self.n_neighbors,
+                    initialization=self.initialization,
+                    persistence_threshold=self.persistence_threshold,
+                    spline_smoothing=self.spline_smoothing,
+                    max_cycles=self.max_cycles,
+                    random_state=self.random_state + run + 1,
+                    standardize=self.standardize,
+                    max_residual_dim=0,
+                    detect_cycles=self.detect_cycles,
+                    detect_junctions=self.detect_junctions,
+                    use_local_pca=self.use_local_pca,
+                    use_mip=self.use_mip,
+                    coverage_refinement=False,
+                    stability_selection=False,
+                ).fit(sample)
+            except (ValueError, RuntimeError, np.linalg.LinAlgError):
+                continue
+            junction_counts.append(len(getattr(probe, "junctions_", [])))
+            route_counts.append(len(getattr(probe, "routes_", [])))
+            probe_cycles = int(getattr(probe, "persistent_cycle_count_", 0))
+            if probe_cycles:
+                cycle_hits[: min(len(cycle_hits), probe_cycles)] += 1.0
+        if run_count:
+            cycle_support = cycle_hits / run_count
+        else:
+            cycle_support = cycle_hits
+        self.cycle_support_ = cycle_support
+        for cycle, support in zip(self.persistent_cycles_, cycle_support):
+            cycle.stability_support = float(support)
+        junction_support = (
+            float(np.mean(np.asarray(junction_counts) == len(self.junctions_)))
+            if junction_counts else 0.0
+        )
+        route_support = (
+            float(np.mean(np.asarray(route_counts) == len(self.routes_)))
+            if route_counts else 0.0
+        )
+        self.junction_support_ = np.full(len(self.junctions_), junction_support)
+        self.endpoint_support_ = np.full(len(self.endpoints_), junction_support)
+        self.route_support_ = np.full(len(self.routes_), route_support)
+        self.stability_summary_ = {
+            "enabled": True,
+            "runs": run_count,
+            "successful_runs": len(junction_counts),
+            "min_support": self.stability_min_support,
+            "cycle_support": self.cycle_support_.copy(),
+            "junction_support": junction_support,
+            "route_support": route_support,
+        }
+        self.stability_residual_subspaces_ = None
+
     def _project_centerline(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         original = _as_point_cloud(X)
         if original.shape[1] != self.n_features_in_:
@@ -1847,5 +2251,24 @@ class SplineGraphEmbedding:
             title=title,
         )
 
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        """Return constructor parameters for scikit-learn compatibility."""
+        parameters = inspect.signature(self.__init__).parameters
+        return {
+            name: getattr(self, name)
+            for name in parameters
+            if name != "self" and hasattr(self, name)
+        }
 
-__all__ = ["SplineGraphEmbedding"]
+    def set_params(self, **params: Any) -> SkeletalEmbedding:
+        """Set constructor parameters using the scikit-learn convention."""
+        valid = self.get_params()
+        unknown = sorted(set(params) - set(valid))
+        if unknown:
+            raise ValueError(f"Invalid parameter(s): {', '.join(unknown)}")
+        for name, value in params.items():
+            setattr(self, name, value)
+        return self
+
+
+__all__ = ["SkeletalEmbedding"]

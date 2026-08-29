@@ -1,7 +1,7 @@
 # Implementation details
 
 This document describes the current implementation of
-`SplineGraphEmbedding`. The [whitepaper](whitepaper.md) gives the conceptual
+`SkeletalEmbedding`. The [whitepaper](whitepaper.md) gives the conceptual
 description; this document records the data flow, algorithms, public fields,
 fallbacks, and implementation-specific trade-offs.
 
@@ -17,6 +17,8 @@ The implementation uses four related graph objects:
   connectivity constraints have been applied.
 - A route chain is a maximal degree-2 path in the backbone graph. Each chain
   is fitted as one open or closed curve and becomes a public route.
+- The skeleton graph is the backbone graph plus typed rib edges. Each fitted
+  spline carries `element_type`, `level`, and support metadata.
 
 These objects should not be treated as interchangeable. The observation and
 landmark graphs provide candidate structure; the backbone graph is the
@@ -67,7 +69,7 @@ a small finite floor instead of producing `NaN` values.
 
 ### 3.1 Coarsening mode
 
-`backbone_initialization="coarsen"` is the compatibility default. The
+`initialization="legacy_coarsen"` preserves the old implementation. The
 implementation compresses observations with deterministic NumPy k-means using
 k-means++ initialization, constructs a landmark minimum spanning tree, adds
 local cycle-closing candidates, and extracts route chains.
@@ -79,7 +81,7 @@ symmetrized landmark k-nearest-neighbor graph, controlled by
 
 ### 3.2 Topological mode
 
-`backbone_initialization="topological"` builds a weighted, symmetric kNN graph
+`initialization="skeletal"` builds a weighted, symmetric kNN graph
 over the fitting coordinates. Edge lengths supply geometric costs. Affinity
 weights supply conductances for optional electrical diagnostics. With
 `mutual_knn=True`, only reciprocal neighbor pairs are retained. The kNN graph
@@ -280,11 +282,11 @@ route network and do not change route assignments or residuals.
 The core estimator can be used as follows:
 
 ```python
-from topological_graph_embedding import SplineGraphEmbedding
+from skeletalembedding import SkeletalEmbedding
 
-model = SplineGraphEmbedding(
+model = SkeletalEmbedding(
     n_centroids=32,
-    backbone_initialization="topological",
+    initialization="skeletal",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,
@@ -303,16 +305,16 @@ legacy field aliases.
 The optional scikit-learn adapters are:
 
 ```python
-from topological_graph_embedding.sklearn import (
-    SplineEmbeddingClassifier,
-    SplineEmbeddingTransformer,
+from skeletalembedding.sklearn import (
+    SkeletalEmbeddingClassifier,
+    SkeletalEmbeddingTransformer,
 )
 
-transformer = SplineEmbeddingTransformer()
+transformer = SkeletalEmbeddingTransformer()
 features = transformer.fit_transform(X)
 result = transformer.transform_result(X)
 
-classifier = SplineEmbeddingClassifier(estimator=downstream_estimator)
+classifier = SkeletalEmbeddingClassifier(estimator=downstream_estimator)
 classifier.fit(X_train, y_train)
 predictions = classifier.predict(X_test)
 ```
@@ -344,14 +346,34 @@ When Ripser is unavailable, the pure-NumPy fallback internally caps its sample
 at 120 because its full Rips 2-skeleton is cubic. Effective resistance,
 electrical flow, and their routing weights remain opt-in.
 
-## 11. Reproducibility and limitations
+## 11. Coverage refinement and residual subspaces
+
+After backbone splines are fitted, each assigned observation is decomposed as
+
+`x = projected + U(t) @ residual_coordinates + post_pca_residual`.
+
+The PCA basis is tangent-orthogonal and is smoothed along each element using
+neighboring projectors. Coverage refinement evaluates the post-PCA residual,
+not the raw distance to the centerline. High-error seeds propose local ribs
+from observed residual directions; candidates are scored by reconstruction
+gain minus length, rib, and junction penalties. Coverage intersections are
+representation devices and are never fed back into persistent topology
+inference. Consequently `skeleton_cycle_rank_` may exceed
+`persistent_cycle_count_`, while the backbone cycle rank remains topology
+driven.
+
+`coverage_history_`, `coverage_iterations_`, `rib_paths_`, `rib_support_`,
+`element_types_`, `reconstruction_`, and `post_pca_residual_norm_` expose the
+refinement decisions and final approximation quality.
+
+## 12. Reproducibility and limitations
 
 Randomized stages use `random_state`, including landmark initialization and
 subsampling for capped persistence. Numerical outputs can still depend on the
 installed SciPy and Ripser versions when optional backends are available. The
 chosen backend is recorded on the fitted estimator.
 
-The route network is a one-dimensional approximation. It does not model
-branch-specific density or uncertainty, and projection is not a full
-continuous optimization. Metro coordinates are for display and are not
-intended to preserve distances in the original feature space.
+The backbone and residual fields are approximations. Ribs provide a sparse
+geometric wire-frame for coverage; they are not evidence that the underlying
+manifold has additional persistent cycles. Metro coordinates are for display
+and are not intended to preserve distances in the original feature space.

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from topological_graph_embedding.datasets import (
+from skeletalembedding.datasets import (
     generate_synthetic_datasets,
     noisy_binary_tree,
     noisy_polygon_rays_circles,

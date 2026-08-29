@@ -1,13 +1,15 @@
-# Topological graph embedding
+# SkeletalEmbedding
 
-Topological graph embedding extracts a compact skeleton from a noisy point
-cloud as a small, smooth network of one-dimensional routes. The learned
-network can contain
+SkeletalEmbedding extracts a compact skeleton from a noisy point cloud as a
+small, smooth network of backbone splines, optional coverage ribs, and local
+residual subspaces. The learned network can contain
 endpoints, branches, junctions, open paths, and loops. Each observation is
 assigned to a route, given a position along that route, and described by the
 residual that remains after projection.
 
-The main idea is useful when the data have a **graph-shaped latent structure**:
+The backbone is useful when the data have a **graph-shaped latent structure**;
+coverage refinement extends it to surfaces and other higher-dimensional
+manifolds:
 cell lineages, trajectories, branching processes, road-like geometry, or
 scientific measurements concentrated around curves and networks. It is not
 intended to replace a general-purpose nonlinear embedding. Instead, it makes
@@ -60,18 +62,17 @@ route assignments or residuals learned in the original metric.
 ## How fitting works
 
 The estimator uses a selectable coarse-to-fine pipeline. The default
-`backbone_initialization="coarsen"` path retains the original landmark MST
-initializer. With `backbone_initialization="topological"`, the dense weighted
+`initialization="skeletal"` path treats the dense weighted
 observation kNN graph is treated as a routing substrate and the backbone is
 selected from explicit topology and connectivity constraints:
 
 Most repository notebook workflows explicitly select
-`backbone_initialization="topological"` so their figures and summaries use the
+`initialization="skeletal"` so their figures and summaries use the
 topology-aware initializer. The synthetic binary-tree example is the
 exception: it uses the cycle-free coarsening path so noise between nearby
-branches is not promoted to spurious loops. The library default remains
-`"coarsen"` for backward compatibility; select the notebook behavior directly
-in application code when needed. The synthetic notebook runs the six easy
+branches is not promoted to spurious loops. Select
+`initialization="legacy_coarsen"` explicitly when comparing with the legacy
+initializer. The synthetic notebook runs the six easy
 examples with `persistence_max_points=60` and puts the polygon/hypercube
 examples in a separate cell using cap `300` and normalized H1 threshold `4.0`.
 Electrical resistance/current terms are opt-in, not part of the notebook
@@ -92,15 +93,21 @@ default.
    direction per junction arm.
 4. **Select the backbone.** Candidate landmark routes are scored using length,
    tangent consistency, density, and optional effective-resistance/current
-   support. A greedy selector enforces connectivity, endpoint/junction
-   degrees, and the requested cycle rank.
+   support. A small MIP selector enforces connectivity, endpoint/junction
+   degrees, and the requested persistent cycle rank, with a deterministic
+   fallback when the solver is disabled or infeasible.
 5. **Simplify the graph.** Maximal degree-2 paths are collapsed into route
    support paths. The existing coarsening mode may still prune short terminal
    branches and merge nearby graph junctions.
 6. **Fit route geometry.** Open and closed chains are represented by dense
    sampled curves. SciPy smoothing splines are preferred, with a deterministic
    NumPy fallback for unsupported or numerically difficult cases.
-7. **Project observations.** Each observation is assigned to its closest
+7. **Fit residual subspaces and ribs.** Tangent-orthogonal local PCA fields
+   provide transverse coordinates. When post-PCA reconstruction error exceeds
+   the requested coverage tolerance, stable high-error regions seed candidate
+   transverse or parallel ribs. Candidates are penalized for complexity and
+   selected iteratively.
+8. **Project observations.** Each observation is assigned to its closest
    sampled route. Deterministic normal frames provide stable off-route
    coordinates, including when only a subset is transformed.
 
@@ -130,15 +137,15 @@ and curve fallbacks when optional backends are unavailable.
 ```python
 import numpy as np
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.datasets import generate_synthetic_datasets
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.datasets import generate_synthetic_datasets
 
 datasets = generate_synthetic_datasets(n=500, noise=0.045, random_state=0)
 X = datasets["loop-branch"]
 
-model = SplineGraphEmbedding(
+model = SkeletalEmbedding(
     n_centroids=32,
-    backbone_initialization="topological",
+    initialization="skeletal",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,
@@ -150,9 +157,18 @@ print("cycles:", model.realized_cycle_count_)
 print("median residual:", float(np.median(result.residual_norm)))
 
 # Optional smooth transverse coordinates and reconstruction error.
-model = SplineGraphEmbedding(max_residual_dim=2, random_state=0).fit(X)
+model = SkeletalEmbedding(max_residual_dim=2, random_state=0).fit(X)
 result = model.transform(X)
 print(result.residual_coordinates.shape)
+
+# Optional sparse wire-frame refinement for higher-dimensional structure.
+model = SkeletalEmbedding(
+    max_residual_dim=1,
+    coverage_refinement=True,
+    coverage_error_tolerance=0.10,
+    random_state=0,
+).fit(X)
+print("ribs:", len(model.rib_paths_))
 
 # Stable coordinates in the local hyperplane normal to each route.
 normal = model.normal_coordinates(result)
@@ -228,7 +244,7 @@ The most important estimator parameters are:
 | `max_residual_dim` | Number of learned transverse residual-PCA coordinates; default `0` |
 | `residual_pca_bandwidth` | Gaussian bandwidth in normalized route position |
 | `residual_subspace_smoothness` | Non-negative neighboring-subspace smoothing strength |
-| `backbone_initialization` | `coarsen` for the legacy initializer or `topological` for constrained topology-aware routing |
+| `initialization` | `legacy_coarsen` for the legacy initializer or `skeletal` for topology-aware routing |
 | `junction_scales` / `junction_inner_fraction` | Multiscale annulus settings for local branch detection |
 | `junction_confidence` | Minimum stable branch-count confidence |
 | `use_local_pca` / `local_pca_neighbors` | Enable local tangent and branch-direction estimation |
@@ -243,6 +259,12 @@ The most important estimator parameters are:
 | `standardize` | Whether fitting distances are computed after featurewise standardization |
 | `persistence_max_points` | Cap used by the persistence calculation for large point clouds |
 | `random_state` | Reproducibility for landmark initialization and capped persistence sampling |
+| `use_mip` | Use the small SciPy mixed-integer backbone selector; default `True` |
+| `coverage_refinement` | Add coverage ribs after residual-PCA fitting; default `False` |
+| `coverage_error_tolerance` / `coverage_quantile` | Post-PCA coverage stopping criterion |
+| `coverage_max_iterations` / `coverage_max_ribs` | Limits on adaptive refinement |
+| `coverage_selection` | `greedy` or `mip` rib selection |
+| `stability_selection` / `stability_runs` | Optional subsampling-based structural support |
 
 There are two different notions of scale in the project:
 
@@ -270,7 +292,7 @@ For high-dimensional data, the display reducer is separate from the fitted
 graph:
 
 ```python
-from topological_graph_embedding.visualization.reduction import fit_reducer
+from skeletalembedding.visualization.reduction import fit_reducer
 
 reducer = fit_reducer(X, method="umap", n_neighbors=15)
 ```
@@ -281,11 +303,11 @@ as deterministic display alternatives. The high-dimensional notebook exposes the
 neighbor count and metro dispersion width through interactive sliders.
 
 The shared four-panel renderer is available through
-`topological_graph_embedding.visualization.plot_embedding_row`. For direct
+`skeletalembedding.visualization.plot_embedding_row`. For direct
 control of the metro layout:
 
 ```python
-from topological_graph_embedding.visualization import MetroLayout
+from skeletalembedding.visualization import MetroLayout
 
 layout = MetroLayout(model, residual_width=0.04).fit(result)
 ```
@@ -299,7 +321,7 @@ space. The result is a data skeleton with thick bones rather than a flattened
 metro map. For example:
 
 ```python
-from topological_graph_embedding.visualization import plot_spline_3d
+from skeletalembedding.visualization import plot_spline_3d
 
 figure = plot_spline_3d(
     model,
@@ -322,16 +344,16 @@ The optional adapters expose route information as ordinary numerical features:
 ```python
 from sklearn.ensemble import RandomForestClassifier
 
-from topological_graph_embedding.sklearn import (
-    SplineEmbeddingClassifier,
-    SplineEmbeddingTransformer,
+from skeletalembedding.sklearn import (
+    SkeletalEmbeddingClassifier,
+    SkeletalEmbeddingTransformer,
 )
 
-transformer = SplineEmbeddingTransformer(n_centroids=32, random_state=0)
+transformer = SkeletalEmbeddingTransformer(n_centroids=32, random_state=0)
 features = transformer.fit_transform(X)
 result = transformer.transform_result(X)
 
-classifier = SplineEmbeddingClassifier(
+classifier = SkeletalEmbeddingClassifier(
     estimator=RandomForestClassifier(n_estimators=200, random_state=0),
     n_centroids=32,
     random_state=0,
@@ -375,7 +397,10 @@ fallbacks remain quiet.
 
 ## Limitations
 
-This is a one-dimensional graph-skeleton model. It does not currently model
+SkeletalEmbedding models a sparse one-dimensional backbone and can add
+coverage ribs for higher-dimensional manifolds. Residual PCA fields remain
+local manifold coordinates; the final rib-filled graph is a geometric
+wire-frame approximation, not a claim of topological identity. It does not
 branch-specific density, uncertainty, a full continuous projection
 optimization, or a higher-dimensional manifold with a thick intrinsic cross
 section. The sparse topology is an approximation and can under-realize a
@@ -391,7 +416,7 @@ used as substitutes for the original-space `projected`, `residual`, or
 The main implementation is organized as follows:
 
 ```text
-topological_graph_embedding/
+skeletalembedding/
 ├── embedding.py                 # public estimator and projection API
 ├── results.py                   # immutable EmbeddingResult
 ├── _topology.py                 # graph construction, persistence, local topology

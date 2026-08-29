@@ -83,7 +83,7 @@ class MetroLayout:
     def fit(self, result: EmbeddingResult | None = None) -> MetroLayout:
         """Fit the schematic layout and optionally learn residual-side signs."""
         if not getattr(self.model, "_fitted", False):
-            raise RuntimeError("Fit the SplineGraphEmbedding before its metro layout")
+            raise RuntimeError("Fit the SkeletalEmbedding before its metro layout")
         if not 0.0 < self.residual_quantile <= 1.0:
             raise ValueError("residual_quantile must be in (0, 1]")
 

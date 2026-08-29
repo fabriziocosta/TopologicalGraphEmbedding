@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from topological_graph_embedding import SplineGraphEmbedding
-from topological_graph_embedding.sklearn import (
-    SplineEmbeddingClassifier,
-    SplineEmbeddingTransformer,
+from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.sklearn import (
+    SkeletalEmbeddingClassifier,
+    SkeletalEmbeddingTransformer,
 )
 
 
@@ -25,25 +25,25 @@ def _noisy_line(n=90, seed=10):
 )
 def test_residual_pca_parameters_are_validated(parameter, value):
     with pytest.raises((TypeError, ValueError)):
-        SplineGraphEmbedding(**{parameter: value})
+        SkeletalEmbedding(**{parameter: value})
 
 
 def test_residual_pca_shapes_reconstruction_and_legacy_backfill():
     points = _noisy_line()
     for dimension in (0, 1, 2):
-        result = SplineGraphEmbedding(
+        result = SkeletalEmbedding(
             n_centroids=10, random_state=4, max_residual_dim=dimension,
         ).fit_transform(points)
         assert result.residual_coordinates.shape == (len(points), dimension)
         assert result.reconstructed.shape == points.shape
         assert result.unexplained_residual.shape == points.shape
         assert np.allclose(points, result.reconstructed + result.unexplained_residual)
-    model = SplineGraphEmbedding(n_centroids=10, random_state=4, max_residual_dim=5).fit(points)
+    model = SkeletalEmbedding(n_centroids=10, random_state=4, max_residual_dim=5).fit(points)
     assert model.residual_dim_ == 2
 
 
 def test_residual_bases_are_tangent_orthogonal_and_orthonormal():
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=10, random_state=4, max_residual_dim=2,
     ).fit(_noisy_line())
     for route, basis in enumerate(model.residual_bases_):
@@ -55,7 +55,7 @@ def test_residual_bases_are_tangent_orthogonal_and_orthonormal():
 
 
 def test_residual_pca_recovers_dominant_transverse_variance():
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=10, random_state=4, standardize=False, max_residual_dim=1,
     ).fit(_noisy_line(seed=12))
     values = np.concatenate(model.residual_eigenvalues_)
@@ -66,7 +66,7 @@ def test_residual_pca_recovers_dominant_transverse_variance():
 
 def test_residual_pca_transform_is_batch_independent_and_closed_seam_is_shared():
     points = _noisy_line()
-    model = SplineGraphEmbedding(
+    model = SkeletalEmbedding(
         n_centroids=10, random_state=4, max_residual_dim=1,
     ).fit(points)
     full = model.transform(points)
@@ -76,7 +76,7 @@ def test_residual_pca_transform_is_batch_independent_and_closed_seam_is_shared()
 
     theta = np.linspace(0.0, 2.0 * np.pi, 120, endpoint=False)
     circle = np.column_stack([np.cos(theta), np.sin(theta), 0.05 * np.cos(3.0 * theta)])
-    closed = SplineGraphEmbedding(
+    closed = SkeletalEmbedding(
         n_centroids=16, random_state=2, max_residual_dim=1,
     ).fit(circle)
     for spline, basis in zip(closed.routes_, closed.residual_bases_):
@@ -86,7 +86,7 @@ def test_residual_pca_transform_is_batch_independent_and_closed_seam_is_shared()
 
 def test_sklearn_residual_pca_features_and_classifier_dimensions():
     points = _noisy_line()
-    transformer = SplineEmbeddingTransformer(
+    transformer = SkeletalEmbeddingTransformer(
         n_centroids=10, random_state=4, max_residual_dim=1,
     ).fit(points)
     names = transformer.get_feature_names_out()
@@ -96,7 +96,7 @@ def test_sklearn_residual_pca_features_and_classifier_dimensions():
     assert features.shape[1] == len(names)
 
     labels = (points[:, 0] > 0).astype(int)
-    classifier = SplineEmbeddingClassifier(
+    classifier = SkeletalEmbeddingClassifier(
         n_centroids=10, random_state=4, max_residual_dim=1,
     ).fit(points, labels)
     assert classifier.embedding_.max_residual_dim == 1

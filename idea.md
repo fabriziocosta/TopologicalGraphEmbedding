@@ -317,7 +317,7 @@ Use these expected results only for evaluation:
 Implement something approximately like:
 
 ```python
-class SplineGraphEmbedding:
+class SkeletalEmbedding:
     def __init__(
         self,
         n_centroids=32,
