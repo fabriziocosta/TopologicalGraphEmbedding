@@ -1,4 +1,4 @@
-"""Synthetic route-embedding visualization workflow."""
+"""Synthetic skeletal-embedding visualization workflow."""
 
 import warnings
 from pathlib import Path
@@ -86,7 +86,8 @@ def fit_datasets(
             'face_cycles': getattr(model, 'face_cycle_count_', 0),
             'junctions': len(model.junctions_),
             'endpoints': len(model.endpoints_),
-            'spline_chains': len(model.routes_),
+            'spline_chains': len(model.splines_),
+            'ribs': len(model.rib_paths_),
             'median_residual': float(np.median(projections[name].residual_norm)),
         })
     return models, projections, summary
@@ -95,7 +96,7 @@ def fit_datasets(
 def _plot_summary(summary, figure_dir, filename='summary_table.png'):
     columns = [
         'dataset', 'cycles', 'face_cycles', 'junctions', 'endpoints',
-        'spline_chains', 'median_residual',
+        'spline_chains', 'ribs', 'median_residual',
     ]
     table_values = [[
         f'{row[column]:.4f}' if column == 'median_residual' else row[column]
@@ -165,7 +166,7 @@ def run_static_demo(
         plot_embedding_row(
             axes[row], points, labels, model, result,
             projected_title=title,
-            graph_title=f'{name}: graph embedding',
+            graph_title=f'{name}: skeleton embedding',
             metro_lines_title=f'{name}: metro-map lines',
             metro_points_title=f'{name}: metro-map points',
             reducer=reducers[name],
@@ -174,7 +175,7 @@ def run_static_demo(
         )
 
     figure.suptitle(
-        'Synthetic distributions embedded with spline routes', fontsize=16, y=0.995,
+        'Synthetic distributions embedded with skeletal splines', fontsize=16, y=0.995,
     )
     figure.tight_layout()
     figure_dir = project_root / 'notebooks' / 'figures'

@@ -11,10 +11,9 @@ edit its parameters and rerun the function call. The hypercube dimension is cont
 `STAR_BRANCHES` (default `4`). The hypercube is displayed through a 2D PCA
 projection.
 
-Notebook workflows use `initialization="skeletal"` explicitly.
-This keeps notebook figures on the topology-aware initialization path even
-though the library estimator retains `"legacy_coarsen"` as its backward-compatible
-default. The workflow wrappers also silence the expected constraint-warning
+The main notebook workflows use `initialization="skeletal"` explicitly. This
+is also the library default; `initialization="legacy_coarsen"` is retained for
+the focused coarsening view and comparison cases. The workflow wrappers also silence the expected constraint-warning
 when a noisy interactive refit cannot realize every requested incidence;
 direct estimator use still exposes that diagnostic normally.
 
@@ -35,19 +34,19 @@ the reducer, UMAP neighbor count, and metro dispersion width. Press
 
 `visualize_sklearn_toy_datasets.ipynb` applies the same model to scikit-learn's
 moons, circles, blobs, classification, and Gaussian-quantile generators. It
-shows the fitted graph beside the graph-coordinate embedding `(route_id, position)`.
+shows the fitted skeleton beside the graph-coordinate embedding `(route_id, position)`.
 Its final cell uses the same grouped interactive viewer as the other notebooks
 for refitting one selected toy dataset.
 
 `visualize_high_dim_sklearn_datasets.ipynb` applies the model to the built-in
 scikit-learn digits, wine, breast-cancer, and diabetes datasets. It shows UMAP
 projections by default (with PCA and classical MDS available as options), longitudinal graph coordinates, and a schematic metro-map layout
-of the fitted graphs. The metro-map view preserves the fitted graph's broad
+of the fitted skeletons. The metro-map view preserves the fitted skeleton's broad
 source-space placement and branch ordering while simplifying routes, keeps
-spline routes straight where possible, uses parallel offset lanes where
+skeletal splines straight where possible, uses parallel offset lanes where
 needed, starts incident lines at the junction-disc radius, and allows routes
 to cross when that preserves the source correspondence. Observations are placed using
-their position and residual offset relative to the assigned spline. It
+their position and residual offset relative to the assigned skeletal spline. It
 includes separate metro line/station and metro point-only panels, plus the
 same grouped interactive viewer, including the UMAP neighbor slider.
 
@@ -56,15 +55,15 @@ pale-blue-to-ink-blue gradient and a target colorbar.
 
 `visualize_paul_single_cell.ipynb` applies the model to the Paul et al. mouse
 bone-marrow MARS-seq experiment. It downloads the public `paul15.h5` file to
-`~/.cache/topologicalgraphembedding/`, preprocesses expression without using
+`~/.cache/skeletalembedding/`, preprocesses expression without using
 cell labels during fitting, denoises the graph-fitting space with 50 PCA
-components, and shows PCA, intrinsic graph coordinates, the fitted spline
-graph, broad lineages, and marker-expression panels.
+components, and shows PCA, intrinsic graph coordinates, the fitted skeletal
+network, broad lineages, and marker-expression panels.
 
-`interactive_knn_coarsening.ipynb` provides a focused graph-coarsening view:
+`interactive_knn_coarsening.ipynb` provides a focused routing-substrate view:
 select one of the 2D synthetic datasets, inspect its light observation-level
 kNN graph, adjust the base k, and use the coarsened k-means slider to see the
-centroid graph with edges induced by the selected kNN connections. It also
+centroid routing graph with edges induced by the selected kNN connections. It also
 includes switches for mutual nearest neighbors and adding the Euclidean MST.
 The coarsened k-means slider controls landmark/backbone resolution, while the
 backbone-simplification slider controls how close junctions may be before they
@@ -88,8 +87,8 @@ layout, `interactive.py` contains the Plotly view, and
 metro-map point panel hides junction and endpoint markers by default; pass
 `show_metro_nodes=True` to display them.
 
-The notebooks import the installed `skeletalembedding` package. The
-notebook bootstrap adds the repository root to the import path for local
+The notebooks import the installed `skeletalembedding` package. Their
+bootstrap adds both the repository root and `src/` to the import path for local
 development, but the package is the sole source of implementation code.
 
 Start Jupyter from either the repository root or this directory:
@@ -101,7 +100,7 @@ jupyter notebook notebooks/visualize_sklearn_toy_datasets.ipynb
 
 For reusable sklearn pipelines, `skeletalembedding.sklearn` provides
 `SkeletalEmbeddingTransformer` and `SkeletalEmbeddingClassifier`. The classifier combines
-spline identity, longitudinal position, and residual coordinates in the local
+skeleton-element identity, longitudinal position, and residual coordinates in the local
 hyperplane perpendicular to each spline with a configurable downstream
 estimator passed through `estimator=`; its default is a random forest. The high-dimensional dataset view
 adds one per-route score just past `t=1`: normalized out-of-fold multiclass

@@ -1,4 +1,4 @@
-"""High-dimensional route-embedding visualization workflow."""
+"""High-dimensional skeletal-embedding visualization workflow."""
 
 import warnings
 from pathlib import Path
@@ -107,7 +107,8 @@ def fit_datasets(
             'cycles': model.realized_cycle_count_,
             'junctions': len(model.junctions_),
             'endpoints': len(model.endpoints_),
-            'spline_chains': len(model.routes_),
+            'spline_chains': len(model.splines_),
+            'ribs': len(model.rib_paths_),
             'median_residual': float(np.median(result.residual_norm)),
             'score_type': score_label,
             'route_score': (
@@ -121,7 +122,7 @@ def fit_datasets(
 def _plot_summary(summary, figure_dir):
     columns = [
         'dataset', 'dimensions', 'cycles', 'junctions',
-        'endpoints', 'spline_chains', 'median_residual',
+        'endpoints', 'spline_chains', 'ribs', 'median_residual',
         'score_type', 'route_score',
     ]
     values = [[
@@ -175,8 +176,8 @@ def run_demo(
         result = embeddings[name]
         plot_embedding_row(
             axes[row], points, labels, models[name], result,
-            projected_title=f'{name}: {reducer.upper()} view and spline graph',
-            graph_title=f'{name}: graph embedding',
+            projected_title=f'{name}: {reducer.upper()} view and skeletal spline network',
+            graph_title=f'{name}: skeleton embedding',
             metro_lines_title=f'{name}: metro-map lines',
             metro_points_title=f'{name}: metro-map points',
             reducer=reducer_model,

@@ -8,7 +8,7 @@ import requests
 from sklearn.neighbors import NearestNeighbors
 
 DATA_URL = "https://exampledata.scverse.org/scanpy/paul15.h5"
-DEFAULT_CACHE_PATH = Path.home() / ".cache" / "topologicalgraphembedding" / "paul15.h5"
+DEFAULT_CACHE_PATH = Path.home() / ".cache" / "skeletalembedding" / "paul15.h5"
 CLUSTER_TYPE_NAMES = 6 * ["Ery"] + ["MEP", "Mk", "GMP", "GMP", "DC", "Baso", "Baso", "Mo", "Mo", "Neu", "Neu", "Eos", "Lymph"]
 TYPE_ORDER = ["Ery", "MEP", "Mk", "GMP", "DC", "Baso", "Mo", "Neu", "Eos", "Lymph"]
 BROAD_LINEAGE = {

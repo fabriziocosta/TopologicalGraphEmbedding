@@ -65,7 +65,7 @@ def display_interactive_viewer(
     default_persistence_max_points: int = 60,
     default_persistence_threshold: float | None = None,
 ) -> None:
-    """Display the shared interactive graph-embedding viewer.
+    """Display the shared interactive skeleton-embedding viewer.
 
     ``datasets`` may map names to raw point clouds or to ``(points, labels)``
     pairs. The viewer uses the same controls and rendering path for both forms.
@@ -236,7 +236,7 @@ def display_interactive_viewer(
         plot_embedding_row(
             axes, points, labels, model, result,
             projected_title=f"{name}: {display_name}",
-            graph_title=f"{name}: graph embedding",
+                graph_title=f"{name}: skeleton embedding",
             metro_lines_title=f"{name}: metro-map lines",
             metro_points_title=f"{name}: metro-map points",
             reducer=reducer,
@@ -261,7 +261,8 @@ def display_interactive_viewer(
             "cycles": model.realized_cycle_count_,
             "junctions": len(model.junctions_),
             "endpoints": len(model.endpoints_),
-            "chains": len(model.routes_),
+            "chains": len(model.splines_),
+            "ribs": len(model.rib_paths_),
             "median_residual": round(float(np.median(result.residual_norm)), 4),
             "display_reducer": display_name,
             "umap_neighbors": neighbors_slider.value,
