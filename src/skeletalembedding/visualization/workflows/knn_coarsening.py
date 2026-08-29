@@ -31,7 +31,7 @@ RANDOM_STATE = 7
 def symmetric_knn_graph(
     points,
     n_neighbors=DEFAULT_KNN_NEIGHBORS,
-    mutual_knn=False,
+    mutual_knn=True,
 ):
     """Return an undirected union or mutual observation kNN graph."""
     directed = kneighbors_graph(
@@ -300,7 +300,7 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
             label='endpoints', zorder=7,
         )
 
-    axis.scatter(points[:, 0], points[:, 1], s=5, c='#c7d0d6', alpha=0.20, zorder=0)
+    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=1.0, zorder=0)
     axis.plot([], [], color='black', linewidth=4.0, label='simplified backbone')
     axis.plot([], [], color='#4c78a8', linewidth=2.7, label='fitted spline')
     axis.plot([], [], color='#4c78a8', linewidth=0.9, linestyle=':', label='dense support path')
@@ -527,7 +527,7 @@ def display_interactive_controls(
         style={'description_width': 'initial'},
     )
     coverage_switch = widgets.Checkbox(
-        value=False,
+        value=True,
         description='coverage refinement',
         style={'description_width': 'initial'},
     )
@@ -551,7 +551,7 @@ def display_interactive_controls(
         style={'description_width': 'initial'},
     )
     stability_switch = widgets.Checkbox(
-        value=False,
+        value=True,
         description='stability selection',
         style={'description_width': 'initial'},
     )

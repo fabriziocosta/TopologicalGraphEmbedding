@@ -200,9 +200,12 @@ def display_interactive_controls(datasets):
     """Display the shared interactive viewer for high-dimensional datasets."""
     from .interactive import display_interactive_viewer
 
+    first_dataset = next(iter(datasets.values()))
+    first_points = first_dataset[0] if isinstance(first_dataset, tuple) else first_dataset
     return display_interactive_viewer(
         datasets,
         default_reducer="umap",
         default_n_centroids=32,
         default_max_cycles=5,
+        default_n_points=len(first_points),
     )

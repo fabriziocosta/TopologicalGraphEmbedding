@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap, ListedColormap, to_rgba
+from matplotlib.colors import (
+    BoundaryNorm,
+    LinearSegmentedColormap,
+    ListedColormap,
+    to_rgba,
+)
 from matplotlib.patches import Circle
 from scipy.stats import spearmanr
 from sklearn.base import clone
@@ -38,16 +43,17 @@ _DARK_ROUTE_PALETTE = (
     '#3d566e',
 )
 _LIGHT_POINT_PALETTE = (
-    '#a9cbe0',
-    '#efaaa9',
-    '#a5d0c5',
-    '#c5addb',
-    '#edbd98',
-    '#aebfe0',
-    '#ddca91',
-    '#a9bdc9',
+    '#6baed6',
+    '#f28e8e',
+    '#66c2a5',
+    '#b39ddb',
+    '#f4a261',
+    '#8da0cb',
+    '#e6c76b',
+    '#7fb3c8',
+    '#c77c8a',
+    '#9c9ede',
 )
-_LIGHT_POINT_CMAP = ListedColormap(_LIGHT_POINT_PALETTE, name='light_points')
 
 
 def evaluate_route_classification(
@@ -301,11 +307,29 @@ def _target_scatter(axis, x, y, labels, **kwargs):
     continuous = _target_is_continuous(values) and not categorical
     if not np.issubdtype(values.dtype, np.number):
         _, values = np.unique(values, return_inverse=True)
+    if not continuous:
+        _, values = np.unique(values, return_inverse=True)
+        n_classes = max(1, len(np.unique(values)))
+        point_palette = [
+            _LIGHT_POINT_PALETTE[index % len(_LIGHT_POINT_PALETTE)]
+            for index in range(n_classes)
+        ]
+        point_cmap = ListedColormap(point_palette, name='light_points')
+        point_norm = BoundaryNorm(
+            np.arange(-0.5, n_classes + 0.5), ncolors=n_classes,
+        )
+    else:
+        point_cmap = _REGRESSION_CMAP
+        point_norm = None
     scatter_kwargs = {
         'c': values,
-        'cmap': _REGRESSION_CMAP if continuous else _LIGHT_POINT_CMAP,
+        'cmap': point_cmap,
         **kwargs,
     }
+    if point_norm is not None:
+        scatter_kwargs['norm'] = point_norm
+    if categorical:
+        scatter_kwargs['alpha'] = 1.0
     if continuous:
         scatter_kwargs.update(vmin=float(np.min(values)), vmax=float(np.max(values)))
     artist = axis.scatter(x, y, **scatter_kwargs)
@@ -325,7 +349,7 @@ def plot_labeled_graph(axis, points, labels, model, title, colors=None):
     """Plot a fitted graph directly in a two-dimensional feature space."""
     if colors is None:
         colors = route_colors(model)
-    _target_scatter(axis, points[:, 0], points[:, 1], labels, s=10, alpha=0.30)
+    _target_scatter(axis, points[:, 0], points[:, 1], labels, s=10, alpha=1.0)
     for index, spline in enumerate(model.routes_):
         curve = spline.samples * model.scale_ + model.mean_
         if spline.closed:
@@ -345,7 +369,7 @@ def plot_projected_graph(axis, points, labels, model, title, reducer, colors=Non
     displayed_points = reducer.transform(points)
     _target_scatter(
         axis, displayed_points[:, 0], displayed_points[:, 1], labels,
-        s=10, alpha=0.30,
+        s=10, alpha=1.0,
     )
     for index, spline in enumerate(model.routes_):
         curve = spline.samples * model.scale_ + model.mean_
@@ -445,7 +469,7 @@ def plot_graph_embedding(
         size=len(result.position)
     )
     _target_scatter(
-        axis, result.position, graph_coordinate, labels, s=10, alpha=0.45,
+        axis, result.position, graph_coordinate, labels, s=10, alpha=1.0,
     )
     route_rows = np.arange(len(model.routes_))
     closed = np.asarray([spline.closed for spline in model.routes_], dtype=bool)

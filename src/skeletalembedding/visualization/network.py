@@ -34,7 +34,7 @@ def plot_network(
         "#a24b2a", "#365486", "#665126", "#3d566e",
     )
     ax.scatter(
-        data[:, 0], data[:, 1], s=10, alpha=0.22,
+        data[:, 0], data[:, 1], s=10, alpha=1.0,
         color="#a9cbe0", label="observations",
     )
     for index, route in enumerate(model.routes_):

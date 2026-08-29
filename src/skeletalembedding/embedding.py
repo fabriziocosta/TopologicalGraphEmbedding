@@ -125,8 +125,8 @@ class SkeletalEmbedding:
         spline_samples_per_node: int = 12,
         linear_structure_tolerance: float = 0.12,
         topology_neighbors: int | None = None,
-        mutual_knn: bool = False,
-        add_mst: bool = False,
+        mutual_knn: bool = True,
+        add_mst: bool = True,
         max_residual_dim: int = 0,
         residual_pca_bandwidth: float = 0.1,
         residual_subspace_smoothness: float = 0.0,
@@ -594,7 +594,11 @@ class SkeletalEmbedding:
         self.local_graph_scales_ = local_scales
         routing_components = [
             np.asarray(component, dtype=int)
-            for component in getattr(routing_graph, "original_components", [])
+            for component in getattr(
+                routing_graph,
+                "topology_components",
+                getattr(routing_graph, "original_components", []),
+            )
         ]
         self.routing_components_ = routing_components
         component_by_vertex = {
@@ -630,7 +634,7 @@ class SkeletalEmbedding:
                 self.max_cycles,
                 int(sum(component_cycle_counts)),
             )
-            if component_cycle_total > self.requested_cycle_count_:
+            if component_cycle_total != self.requested_cycle_count_:
                 self.requested_cycle_count_ = component_cycle_total
                 self.persistent_cycle_count_ = component_cycle_total
                 self.cycle_count_ = component_cycle_total
@@ -1182,6 +1186,10 @@ class SkeletalEmbedding:
                 - self.routing_resistance_weight * resistance_support
                 - self.routing_current_weight * current_support
             )
+            if self.requested_cycle_count_ > 0 and edge in getattr(routing_graph, "mst_edges", set()):
+                # MST augmentation keeps the substrate connected but should
+                # not shortcut a persistent loop when a natural route exists.
+                cost += 10.0
             return max(float(cost), 1e-8)
 
         def allowed_first_edges(specification: dict[str, Any]) -> list[tuple[int, int | None]]:
@@ -1298,8 +1306,22 @@ class SkeletalEmbedding:
                     path = shortest_path(
                         left,
                         right,
+                        blocked_edges=(
+                            getattr(routing_graph, "mst_edges", set())
+                            if self.requested_cycle_count_ > 0 else None
+                        ),
                         required_branch=required_branch,
                     )
+                    if path is None and self.requested_cycle_count_ > 0:
+                        # The MST is a connectivity safeguard.  If the
+                        # natural reciprocal substrate cannot realize a
+                        # landmark route, allow the safeguard as a
+                        # deterministic fallback.
+                        path = shortest_path(
+                            left,
+                            right,
+                            required_branch=required_branch,
+                        )
                     candidate_attempts.append((left, right, required_branch, path is not None))
                     if path is not None:
                         candidates.append(path)

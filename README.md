@@ -75,8 +75,8 @@ branches is not promoted to spurious loops. Select
 initializer. The synthetic notebook runs the six easy
 examples with `persistence_max_points=60` and puts the polygon/hypercube
 examples in a separate cell using cap `300` and normalized H1 threshold `4.0`.
-Electrical resistance/current terms are opt-in, not part of the notebook
-default.
+Electrical resistance/current terms remain opt-in; mutual-neighbour routing
+and Euclidean-MST augmentation are enabled by default.
 
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.
@@ -239,8 +239,8 @@ The most important estimator parameters are:
 | `max_cycles` | Maximum number of cycles allowed in the fitted graph |
 | `persistence_threshold` | H1 significance threshold; topological mode interprets it in normalized nearest-neighbour units |
 | `topology_neighbors` | Number of local kNN neighbors considered for cycle candidates |
-| `mutual_knn` | Retain an observation edge only when both endpoints select each other; default `False` |
-| `add_mst` | Add the exact Euclidean minimum spanning tree to the routing graph; default `False` |
+| `mutual_knn` | Retain an observation edge only when both endpoints select each other; default `True` |
+| `add_mst` | Add the exact Euclidean minimum spanning tree to the routing graph; default `True` |
 | `max_residual_dim` | Number of learned transverse residual-PCA coordinates; default `0` |
 | `residual_pca_bandwidth` | Gaussian bandwidth in normalized route position |
 | `residual_subspace_smoothness` | Non-negative neighboring-subspace smoothing strength |

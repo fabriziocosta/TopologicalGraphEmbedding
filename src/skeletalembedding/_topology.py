@@ -243,6 +243,7 @@ def _weighted_symmetric_knn_graph(
     """
     points = np.asarray(X, dtype=float)
     graph = _WeightedKNNGraph(points)
+    graph.mst_edges = set()
     if len(points) < 2:
         graph.local_scales = np.ones(len(points), dtype=float)
         return graph, graph.local_scales
@@ -273,29 +274,36 @@ def _weighted_symmetric_knn_graph(
             for source, row in enumerate(indices)
         ]
 
+    union_graph = _WeightedKNNGraph(points)
     for source in range(len(points)):
         for column in range(1, count + 1):
             target = int(indices[source, column])
-            if mutual_knn and source not in neighbor_sets[target]:
-                continue
             distance = float(distances[source, column])
             denominator = max(local_scales[source] * local_scales[target], 1e-12)
             conductance = float(np.exp(-(distance * distance) / denominator))
-            graph.add_edge(source, target, distance, conductance)
+            union_graph.add_edge(source, target, distance, conductance)
+            if not mutual_knn or source in neighbor_sets[target]:
+                graph.add_edge(source, target, distance, conductance)
 
     if add_mst:
         mst_edges, mst_lengths = _euclidean_mst_edges(points)
         for (left, right), distance in zip(mst_edges, mst_lengths):
+            edge = graph.key(int(left), int(right))
+            was_present = edge in graph.edges
             denominator = max(local_scales[left] * local_scales[right], 1e-12)
             conductance = float(np.exp(-(distance * distance) / denominator))
             graph.add_edge(int(left), int(right), float(distance), conductance)
+            if not was_present:
+                graph.mst_edges.add(edge)
 
     components = graph.connected_components()
-    # Keep the natural kNN components for topology-aware routing.  A bridge
-    # is still added below so optional electrical diagnostics have a connected
-    # substrate, but it must not become a fabricated spline route between
-    # genuinely separate data components.
+    # ``original_components`` describes the selected graph and is retained for
+    # low-level diagnostics.  Topology-aware routing uses the union-neighbour
+    # components so reciprocal filtering cannot fragment a genuine branch.
     graph.original_components = [component.copy() for component in components]
+    graph.topology_components = [
+        component.copy() for component in union_graph.connected_components()
+    ]
     while len(components) > 1:
         left_component = components[0]
         best: tuple[float, int, int] | None = None

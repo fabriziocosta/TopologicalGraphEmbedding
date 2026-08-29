@@ -35,6 +35,17 @@ def _unpack_dataset(value: Any) -> tuple[np.ndarray, np.ndarray]:
     return points, labels
 
 
+def _subsample_dataset(value: Any, n_points: int) -> Any:
+    """Keep a deterministic, evenly spaced subset of a dataset."""
+    points, labels = _unpack_dataset(value)
+    if len(points) <= n_points:
+        return value
+    indices = np.linspace(0, len(points) - 1, n_points, dtype=int)
+    if isinstance(value, tuple) and len(value) == 2:
+        return points[indices], labels[indices]
+    return points[indices]
+
+
 def _section(widgets: Any, title: str, *children: Any) -> Any:
     row_layout = widgets.Layout(
         display="flex",
@@ -76,7 +87,7 @@ def display_interactive_viewer(
     The graph is refit only after pressing the render button, matching the
     computationally expensive nature of the controls. When ``dataset_factory``
     is supplied, the Data section also exposes controls for regenerating the
-    point clouds with a different sample count or noise level.
+    point clouds with a different sample percentage or noise level.
     """
     if not datasets:
         raise ValueError("datasets must contain at least one named dataset")
@@ -107,15 +118,15 @@ def display_interactive_viewer(
         layout=widgets.Layout(width="390px"),
     )
     points_slider = widgets.IntSlider(
-        value=initial_n_points,
+        value=100,
         min=10,
-        max=max(5000, initial_n_points),
+        max=100,
         step=10,
-        description="num points",
+        description="points (%)",
         continuous_update=False,
         style=style,
         layout=control_width,
-    ) if dataset_factory is not None else None
+    ) if default_n_points is not None else None
     noise_slider = widgets.FloatSlider(
         value=float(default_noise),
         min=0.0,
@@ -153,10 +164,10 @@ def display_interactive_viewer(
         style=style, layout=control_width,
     )
     mutual_knn_checkbox = widgets.Checkbox(
-        value=False, description="mutual kNN", style=style, layout=control_width,
+        value=True, description="mutual kNN", style=style, layout=control_width,
     )
     add_mst_checkbox = widgets.Checkbox(
-        value=False, description="add Euclidean MST", style=style, layout=control_width,
+        value=True, description="add Euclidean MST", style=style, layout=control_width,
     )
     use_mip_checkbox = widgets.Checkbox(
         value=True, description="use MIP backbone selection", style=style,
@@ -418,9 +429,10 @@ def display_interactive_viewer(
     plot_output.layout.width = "100%"
     metrics_output = widgets.HTML()
     last_render_key: tuple[Any, ...] | None = None
-    last_data_key: tuple[int, float] | None = (
+    last_data_key: tuple[Any, ...] | None = (
         (initial_n_points, float(default_noise))
-        if dataset_factory is not None else None
+        if dataset_factory is not None
+        else ((100,) if points_slider is not None else None)
     )
     active_datasets = datasets
 
@@ -454,7 +466,10 @@ def display_interactive_viewer(
     def render_selected_dataset(_=None) -> None:
         nonlocal active_datasets, last_data_key, last_render_key
         if dataset_factory is not None:
-            data_key = (int(points_slider.value), float(noise_slider.value))
+            n_points = max(1, round(
+                initial_n_points * int(points_slider.value) / 100,
+            ))
+            data_key = (n_points, float(noise_slider.value))
             if data_key != last_data_key:
                 active_datasets = dataset_factory(*data_key)
                 if not active_datasets:
@@ -462,6 +477,20 @@ def display_interactive_viewer(
                 dataset_selector.options = list(active_datasets)
                 if dataset_selector.value not in active_datasets:
                     dataset_selector.value = next(iter(active_datasets))
+                last_data_key = data_key
+        elif points_slider is not None:
+            point_fraction = int(points_slider.value)
+            data_key = (point_fraction,)
+            if data_key != last_data_key:
+                active_datasets = {
+                    name: _subsample_dataset(
+                        value,
+                        max(1, round(
+                            len(_unpack_dataset(value)[0]) * point_fraction / 100,
+                        )),
+                    )
+                    for name, value in datasets.items()
+                }
                 last_data_key = data_key
         else:
             data_key = None
@@ -703,8 +732,10 @@ def display_interactive_viewer(
     update_reducer_controls()
     update_coverage_controls()
     data_controls = [dataset_selector]
-    if dataset_factory is not None:
-        data_controls.extend([points_slider, noise_slider])
+    if points_slider is not None:
+        data_controls.append(points_slider)
+    if noise_slider is not None:
+        data_controls.append(noise_slider)
     display(
         widgets.VBox(
             [
