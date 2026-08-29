@@ -63,7 +63,10 @@ cell labels during fitting, denoises the graph-fitting space with 50 PCA
 components, and shows PCA, intrinsic graph coordinates, the fitted skeletal
 network, broad lineages, and marker-expression panels.
 
-`interactive_knn_coarsening.ipynb` provides a focused routing-substrate view:
+`interactive_knn_coarsening.ipynb` provides a focused routing-substrate view;
+its implementation lives in
+`skeletalembedding.visualization.workflows.knn_coarsening` so the notebook is
+only a thin launcher:
 select one of the 2D synthetic datasets, inspect its light observation-level
 kNN graph, adjust the base k, and use the coarsened k-means slider to see the
 centroid routing graph with edges induced by the selected kNN connections. It also
