@@ -84,3 +84,9 @@ def test_hard_rename_has_one_public_estimator():
     assert not hasattr(skeletalembedding, "GraphBundleEmbedding")
     assert not hasattr(skeletalembedding, "SplineGraphEmbedding")
     assert importlib.util.find_spec("topological_graph_embedding") is None
+
+
+def test_graph_substrate_defaults_enable_mutual_knn_and_mst():
+    model = SkeletalEmbedding()
+    assert model.mutual_knn is True
+    assert model.add_mst is True

@@ -285,6 +285,14 @@ def _weighted_symmetric_knn_graph(
             if not mutual_knn or source in neighbor_sets[target]:
                 graph.add_edge(source, target, distance, conductance)
 
+    natural_graph = _WeightedKNNGraph(points)
+    for edge, length in graph.edges.items():
+        natural_graph.add_edge(
+            edge[0], edge[1], length, graph.conductances[edge],
+        )
+    graph.natural_graph = natural_graph
+    graph.topology_graph = union_graph
+
     if add_mst:
         mst_edges, mst_lengths = _euclidean_mst_edges(points)
         for (left, right), distance in zip(mst_edges, mst_lengths):

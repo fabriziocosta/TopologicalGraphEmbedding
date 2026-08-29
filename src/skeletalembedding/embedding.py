@@ -962,6 +962,17 @@ class SkeletalEmbedding:
             if len(endpoints) > desired_endpoints:
                 endpoints.sort(key=lambda region: region.confidence, reverse=True)
                 endpoints = endpoints[:desired_endpoints]
+        if (
+            len(routing_components) > 1
+            and self.requested_cycle_count_ >= len(routing_components)
+            and sum(component_cycle_counts) >= len(routing_components)
+        ):
+            # Independent persistent loops have no intrinsic junction. A
+            # coarse MST can create a spurious branch vote where its bridge
+            # touches one loop; keep that bridge in the substrate, but do not
+            # promote it to skeletal topology.
+            junctions = []
+            endpoints = []
         self.junction_regions_ = junctions
         self.endpoint_regions_ = endpoints
         self.junctions_ = junctions
@@ -1165,6 +1176,7 @@ class SkeletalEmbedding:
 
         edge_lengths = np.asarray(list(routing_graph.edges.values()), dtype=float)
         reference_length = float(np.median(edge_lengths[edge_lengths > 1e-12])) if np.any(edge_lengths > 1e-12) else 1.0
+        path_graph = getattr(routing_graph, "topology_graph", routing_graph)
         leverage_values = np.asarray(list(self.edge_leverage_.values()), dtype=float)
         leverage_reference = float(np.max(leverage_values)) if len(leverage_values) else 1.0
         traffic_reference = 1.0
@@ -1172,11 +1184,16 @@ class SkeletalEmbedding:
 
         def edge_cost(left: int, right: int) -> float:
             edge = routing_graph.key(left, right)
-            length_term = routing_graph.edges[edge] / max(reference_length, 1e-12)
+            length = (
+                routing_graph.edges[edge]
+                if edge in routing_graph.edges
+                else path_graph.edges[edge]
+            )
+            length_term = length / max(reference_length, 1e-12)
             tangent_term = _tangent_inconsistency(
                 self.local_tangents_[left], self.local_tangents_[right]
             )
-            density_term = 1.0 / max(routing_graph.edge_density.get(edge, 0.0), 1e-6)
+            density_term = 1.0 / max(routing_graph.edge_density.get(edge, 1.0), 1e-6)
             resistance_support = self.edge_leverage_.get(edge, 0.0) / max(leverage_reference, 1e-12)
             current_support = self.electrical_traffic_.get(edge, 0.0) / max(traffic_reference, 1e-12)
             cost = (
@@ -1192,13 +1209,16 @@ class SkeletalEmbedding:
                 cost += 10.0
             return max(float(cost), 1e-8)
 
-        def allowed_first_edges(specification: dict[str, Any]) -> list[tuple[int, int | None]]:
+        def allowed_first_edges(
+            specification: dict[str, Any],
+            search_graph: Any = path_graph,
+        ) -> list[tuple[int, int | None]]:
             source = specification["vertex"]
             if specification["kind"] != "junction":
-                return [(neighbour, None) for neighbour in routing_graph.adjacency[source]]
+                return [(neighbour, None) for neighbour in search_graph.adjacency[source]]
             directions = self.junction_branch_directions_.get(specification["region"].node_id, np.empty((0, points.shape[1])))
             candidates: list[tuple[int, int | None, float]] = []
-            for neighbour in routing_graph.adjacency[source]:
+            for neighbour in search_graph.adjacency[source]:
                 vector = points[neighbour] - specification["center"]
                 if len(directions):
                     scores = [_departure_angle(direction, vector) for direction in directions]
@@ -1215,6 +1235,7 @@ class SkeletalEmbedding:
             target: int,
             blocked_edges: set[tuple[int, int]] | None = None,
             required_branch: int | None = None,
+            search_graph: Any = path_graph,
         ) -> CandidatePath | None:
             source_spec = specifications[start]
             target_spec = specifications[target]
@@ -1225,7 +1246,7 @@ class SkeletalEmbedding:
             blocked_edges = set() if blocked_edges is None else blocked_edges
             queue: list[tuple[float, int, list[int], int | None]] = []
             best: dict[tuple[int, int | None], float] = {}
-            for neighbour, branch in allowed_first_edges(source_spec):
+            for neighbour, branch in allowed_first_edges(source_spec, search_graph):
                 if required_branch is not None and branch != required_branch:
                     continue
                 if (
@@ -1234,7 +1255,7 @@ class SkeletalEmbedding:
                     != component_by_vertex.get(neighbour)
                 ):
                     continue
-                if routing_graph.key(source_vertex, neighbour) in blocked_edges:
+                if search_graph.key(source_vertex, neighbour) in blocked_edges:
                     continue
                 initial = edge_cost(source_vertex, neighbour)
                 heapq.heappush(queue, (initial, neighbour, [source_vertex, neighbour], branch))
@@ -1275,7 +1296,7 @@ class SkeletalEmbedding:
                         start, target, path, float(cost), length, tangent_cost,
                         support, traffic, branch_start, branch_end,
                     )
-                for neighbour in routing_graph.adjacency[node]:
+                for neighbour in search_graph.adjacency[node]:
                     if neighbour in path:
                         continue
                     if (
@@ -1284,7 +1305,7 @@ class SkeletalEmbedding:
                         != component_by_vertex.get(neighbour)
                     ):
                         continue
-                    if routing_graph.key(node, neighbour) in blocked_edges:
+                    if search_graph.key(node, neighbour) in blocked_edges:
                         continue
                     candidate_cost = cost + edge_cost(node, neighbour)
                     if candidate_cost < best.get((neighbour, branch_start), np.inf):
@@ -1311,6 +1332,7 @@ class SkeletalEmbedding:
                             if self.requested_cycle_count_ > 0 else None
                         ),
                         required_branch=required_branch,
+                        search_graph=path_graph,
                     )
                     if path is None and self.requested_cycle_count_ > 0:
                         # The MST is a connectivity safeguard.  If the
@@ -1321,6 +1343,7 @@ class SkeletalEmbedding:
                             left,
                             right,
                             required_branch=required_branch,
+                            search_graph=routing_graph,
                         )
                     candidate_attempts.append((left, right, required_branch, path is not None))
                     if path is not None:
