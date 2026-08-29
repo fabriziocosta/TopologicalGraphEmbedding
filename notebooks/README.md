@@ -28,9 +28,12 @@ remain disabled unless explicitly requested.
 
 The final notebook cell calls the shared `ipywidgets` viewer for selecting a
 dataset and interactively refitting it. Controls are grouped into **Data**,
-**Graph fitting**, **Topology**, and **Display** sections; the latter includes
-the reducer, UMAP neighbor count, and metro dispersion width. Press
-**Render selected dataset** after changing the controls.
+**Graph fitting**, **Topology**, **Electrical diagnostics**, **Residual and
+coverage**, **Stability and subsampling**, and **Display** sections. The
+estimator controls include the model/topology kNN sizes, mutual-kNN and MST
+flags, electrical resistance/current diagnostics, residual dimensions, rib
+coverage refinement, and stability subsample count/fraction. Press **Render
+selected dataset** after changing the controls.
 
 `visualize_sklearn_toy_datasets.ipynb` applies the same model to scikit-learn's
 moons, circles, blobs, classification, and Gaussian-quantile generators. It
