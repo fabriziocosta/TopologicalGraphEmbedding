@@ -10,7 +10,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
-from .embedding import SkeletalEmbedding
+from .estimator import SkeletalEmbedding
 from .results import EmbeddingResult
 
 Array = np.ndarray
@@ -74,6 +74,7 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         coverage_rib_penalty: float = 0.0,
         coverage_junction_penalty: float = 0.0,
         coverage_selection: str = "greedy",
+        rib_candidate_type: str = "transverse",
         stability_selection: bool = False,
         stability_runs: int = 30,
         stability_fraction: float = 0.7,
@@ -137,6 +138,7 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.coverage_rib_penalty = coverage_rib_penalty
         self.coverage_junction_penalty = coverage_junction_penalty
         self.coverage_selection = coverage_selection
+        self.rib_candidate_type = rib_candidate_type
         self.stability_selection = stability_selection
         self.stability_runs = stability_runs
         self.stability_fraction = stability_fraction
@@ -202,6 +204,7 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
             coverage_rib_penalty=self.coverage_rib_penalty,
             coverage_junction_penalty=self.coverage_junction_penalty,
             coverage_selection=self.coverage_selection,
+            rib_candidate_type=self.rib_candidate_type,
             stability_selection=self.stability_selection,
             stability_runs=self.stability_runs,
             stability_fraction=self.stability_fraction,
@@ -237,7 +240,7 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
 
     def _make_feature_names(self) -> np.ndarray:
         route_count = len(self.embedding_.routes_)
-        names = [f"route_{route}" for route in range(route_count)]
+        names = [f"skeleton_element_{element}" for element in range(route_count)]
         names.extend(("position", "residual_norm"))
         if self.embedding_.residual_dim_ > 0:
             names.extend(
@@ -344,6 +347,7 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
         coverage_rib_penalty: float = 0.0,
         coverage_junction_penalty: float = 0.0,
         coverage_selection: str = "greedy",
+        rib_candidate_type: str = "transverse",
         stability_selection: bool = False,
         stability_runs: int = 30,
         stability_fraction: float = 0.7,
@@ -408,6 +412,7 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
             coverage_rib_penalty=coverage_rib_penalty,
             coverage_junction_penalty=coverage_junction_penalty,
             coverage_selection=coverage_selection,
+            rib_candidate_type=rib_candidate_type,
             stability_selection=stability_selection,
             stability_runs=stability_runs,
             stability_fraction=stability_fraction,

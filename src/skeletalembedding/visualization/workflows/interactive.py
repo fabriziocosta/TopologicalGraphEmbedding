@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from html import escape
 from io import BytesIO
 from typing import Any
@@ -64,13 +65,18 @@ def display_interactive_viewer(
     random_state: int = 0,
     default_persistence_max_points: int = 60,
     default_persistence_threshold: float | None = None,
+    dataset_factory: Callable[[int, float], dict[str, Any]] | None = None,
+    default_n_points: int | None = None,
+    default_noise: float = 0.045,
 ) -> None:
     """Display the shared interactive skeleton-embedding viewer.
 
     ``datasets`` may map names to raw point clouds or to ``(points, labels)``
     pairs. The viewer uses the same controls and rendering path for both forms.
     The graph is refit only after pressing the render button, matching the
-    computationally expensive nature of the controls.
+    computationally expensive nature of the controls. When ``dataset_factory``
+    is supplied, the Data section also exposes controls for regenerating the
+    point clouds with a different sample count or noise level.
     """
     if not datasets:
         raise ValueError("datasets must contain at least one named dataset")
@@ -80,6 +86,11 @@ def display_interactive_viewer(
 
     names = list(datasets)
     first_points, _ = _unpack_dataset(datasets[names[0]])
+    initial_n_points = len(first_points) if default_n_points is None else int(default_n_points)
+    if initial_n_points < 1:
+        raise ValueError("default_n_points must be positive")
+    if default_noise < 0:
+        raise ValueError("default_noise must be non-negative")
     if default_reducer is None:
         default_reducer = "umap" if first_points.shape[1] > 2 else "native"
     default_reducer = str(default_reducer).lower()
@@ -95,6 +106,27 @@ def display_interactive_viewer(
         style=style,
         layout=widgets.Layout(width="390px"),
     )
+    points_slider = widgets.IntSlider(
+        value=initial_n_points,
+        min=10,
+        max=max(5000, initial_n_points),
+        step=10,
+        description="num points",
+        continuous_update=False,
+        style=style,
+        layout=control_width,
+    ) if dataset_factory is not None else None
+    noise_slider = widgets.FloatSlider(
+        value=float(default_noise),
+        min=0.0,
+        max=max(0.20, float(default_noise)),
+        step=0.005,
+        readout_format=".3f",
+        description="noise",
+        continuous_update=False,
+        style=style,
+        layout=control_width,
+    ) if dataset_factory is not None else None
     initialization_selector = widgets.Dropdown(
         options=[
             ("skeletal (topology-aware)", "skeletal"),
@@ -357,6 +389,11 @@ def display_interactive_viewer(
     plot_output.layout.width = "100%"
     metrics_output = widgets.HTML()
     last_render_key: tuple[Any, ...] | None = None
+    last_data_key: tuple[int, float] | None = (
+        (initial_n_points, float(default_noise))
+        if dataset_factory is not None else None
+    )
+    active_datasets = datasets
 
     def update_reducer_controls(*_: Any) -> None:
         umap_neighbors_slider.disabled = reducer_selector.value != "umap"
@@ -386,12 +423,25 @@ def display_interactive_viewer(
         )
 
     def render_selected_dataset(_=None) -> None:
-        nonlocal last_render_key
+        nonlocal active_datasets, last_data_key, last_render_key
+        if dataset_factory is not None:
+            data_key = (int(points_slider.value), float(noise_slider.value))
+            if data_key != last_data_key:
+                active_datasets = dataset_factory(*data_key)
+                if not active_datasets:
+                    raise ValueError("dataset_factory must return at least one named dataset")
+                dataset_selector.options = list(active_datasets)
+                if dataset_selector.value not in active_datasets:
+                    dataset_selector.value = next(iter(active_datasets))
+                last_data_key = data_key
+        else:
+            data_key = None
         name = dataset_selector.value
-        points, labels = _unpack_dataset(datasets[name])
+        points, labels = _unpack_dataset(active_datasets[name])
         update_dataset_bounds(points)
         render_key = (
             name,
+            data_key,
             initialization_selector.value,
             centroid_slider.value,
             model_neighbors_slider.value,
@@ -607,10 +657,13 @@ def display_interactive_viewer(
     coverage_mode.observe(update_coverage_controls, names="value")
     update_reducer_controls()
     update_coverage_controls()
+    data_controls = [dataset_selector]
+    if dataset_factory is not None:
+        data_controls.extend([points_slider, noise_slider])
     display(
         widgets.VBox(
             [
-                _section(widgets, "Data", dataset_selector),
+                _section(widgets, "Data", *data_controls),
                 _section(
                     widgets,
                     "Graph fitting",

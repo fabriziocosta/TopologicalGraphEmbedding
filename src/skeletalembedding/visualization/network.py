@@ -29,9 +29,13 @@ def plot_network(
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 6))
     data = model._original_X_ if X is None else _as_point_cloud(X)
+    colors = (
+        "#123f5a", "#8c2f39", "#246a5b", "#5a3d78",
+        "#a24b2a", "#365486", "#665126", "#3d566e",
+    )
     ax.scatter(
         data[:, 0], data[:, 1], s=10, alpha=0.22,
-        color="tab:blue", label="observations",
+        color="#a9cbe0", label="observations",
     )
     for index, route in enumerate(model.routes_):
         curve = route.samples * model.scale_ + model.mean_
@@ -39,6 +43,7 @@ def plot_network(
             curve = np.vstack([curve, curve[0]])
         ax.plot(
             curve[:, 0], curve[:, 1], linewidth=2.8,
+            color=colors[index % len(colors)],
             label="route" if index == 0 else None,
         )
     junction_ids = getattr(model, "junction_node_ids_", model.junctions_)

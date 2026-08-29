@@ -26,11 +26,20 @@ from ._local_geometry import (
 from ._optimization import select_backbone_mip
 from ._residual_pca import attach_residual_pca, fit_residual_pca
 from ._ribs import propose_ribs, select_ribs
+from ._stability import (
+    jitter_points,
+    match_cycles,
+    match_regions,
+    match_routes,
+    subsample_indices,
+    subspace_principal_angle,
+)
 from ._topology import (
     CandidatePath,
     EndpointRegion,
     JunctionRegion,
     PersistentCycle,
+    _approximate_cycle_representatives,
     _as_point_cloud,
     _cycle_anchor_vertices,
     _estimate_local_topology,
@@ -153,6 +162,7 @@ class SkeletalEmbedding:
         coverage_rib_penalty: float = 0.0,
         coverage_junction_penalty: float = 0.0,
         coverage_selection: str = "greedy",
+        rib_candidate_type: str = "transverse",
         stability_selection: bool = False,
         stability_runs: int = 30,
         stability_fraction: float = 0.7,
@@ -244,12 +254,16 @@ class SkeletalEmbedding:
             raise ValueError("coverage penalties and supports must be finite and non-negative")
         if coverage_selection not in {"greedy", "mip"}:
             raise ValueError("coverage_selection must be 'greedy' or 'mip'")
+        if rib_candidate_type not in {"transverse", "parallel", "both"}:
+            raise ValueError("rib_candidate_type must be 'transverse', 'parallel', or 'both'")
         if stability_runs < 1 or not 0.0 < stability_fraction <= 1.0:
             raise ValueError("stability_runs must be positive and stability_fraction must be in (0, 1]")
         if not 0.0 <= stability_min_support <= 1.0:
             raise ValueError("stability_min_support must be in [0, 1]")
         if stability_jitter < 0 or not np.isfinite(stability_jitter):
             raise ValueError("stability_jitter must be finite and non-negative")
+        if rib_stability_runs is not None and rib_stability_runs < 1:
+            raise ValueError("rib_stability_runs must be positive when provided")
         self.n_centroids = int(n_centroids)
         self.n_neighbors = int(n_neighbors)
         self.initialization = str(initialization)
@@ -305,6 +319,7 @@ class SkeletalEmbedding:
         self.coverage_rib_penalty = float(coverage_rib_penalty)
         self.coverage_junction_penalty = float(coverage_junction_penalty)
         self.coverage_selection = str(coverage_selection)
+        self.rib_candidate_type = str(rib_candidate_type)
         self.stability_selection = bool(stability_selection)
         self.stability_runs = int(stability_runs)
         self.stability_fraction = float(stability_fraction)
@@ -414,6 +429,11 @@ class SkeletalEmbedding:
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
             self.backbone_paths_ = backbone_paths
             self.merge_junction_distance_ = 0.0
+            representatives = _approximate_cycle_representatives(
+                self.routing_graph_, self.persistent_cycle_count_
+            )
+            for cycle, representative in zip(self.persistent_cycles_, representatives):
+                cycle.representative = representative
         elif self.linear_structure_:
             # A noisy sample of a line can produce a branched MST and a
             # borderline H1 bar.  A PCA-ordered chain is the appropriate
@@ -2002,6 +2022,7 @@ class SkeletalEmbedding:
                 points,
                 result,
                 max_candidates=self.coverage_max_candidates_per_iteration,
+                candidate_type=self.rib_candidate_type,
             )
             if self.coverage_min_error is not None:
                 candidates = [
@@ -2091,31 +2112,66 @@ class SkeletalEmbedding:
         self.persistent_cycle_count = self.persistent_cycle_count_
 
     def _run_stability_selection(self, original: Array) -> None:
-        """Estimate structural support with subsamples without averaging fits."""
-        self.junction_support_ = np.ones(len(getattr(self, "junctions_", [])), dtype=float)
-        self.endpoint_support_ = np.ones(len(getattr(self, "endpoints_", [])), dtype=float)
-        self.route_support_ = np.asarray(
-            [1.0] * len(getattr(self, "routes_", [])), dtype=float
-        )
+        """Estimate structural support without averaging fitted geometries.
+
+        Every probe is matched to the full-data model by persistence values,
+        landmark corridors, and sampled spline geometry.  This avoids the
+        misleading global-count support used by the original prototype.
+        """
+        junction_count = len(getattr(self, "junctions_", []))
+        endpoint_count = len(getattr(self, "endpoints_", []))
+        backbone_count = int(getattr(self, "backbone_element_count_", len(self.routes_)))
+        self.junction_support_ = np.ones(junction_count, dtype=float)
+        self.endpoint_support_ = np.ones(endpoint_count, dtype=float)
+        self.route_support_ = np.ones(len(getattr(self, "routes_", [])), dtype=float)
+        self.branch_direction_support_ = {}
+        self.branch_direction_dispersion_ = {}
+        self.junction_consensus_ = []
+        self.endpoint_consensus_ = []
+        self.route_consensus_ = []
+        self.rib_support_ = list(getattr(self, "rib_support_", []))
+        self.rib_stability_ = list(getattr(self, "rib_stability_", []))
+        self.stability_residual_subspaces_ = None
         if not self.stability_selection:
             self.stability_summary_ = {
                 "enabled": False,
                 "runs": 0,
+                "successful_runs": 0,
                 "min_support": self.stability_min_support,
             }
             return
+
         rng = np.random.default_rng(self.random_state)
         cycle_hits = np.zeros(len(self.persistent_cycles_), dtype=float)
-        junction_counts: list[int] = []
-        route_counts: list[int] = []
-        run_count = int(self.stability_runs)
-        sample_size = max(3, int(np.ceil(self.stability_fraction * len(original))))
+        junction_hits = np.zeros(junction_count, dtype=float)
+        endpoint_hits = np.zeros(endpoint_count, dtype=float)
+        route_hits = np.zeros(len(self.routes_), dtype=float)
+        rib_hits = np.zeros(len(getattr(self, "rib_paths_", [])), dtype=float)
+        direction_angles: dict[int, list[float]] = {}
+        residual_angles: list[list[float]] = [[] for _ in range(backbone_count)]
+        successful_runs = 0
+        reference_diagram = np.asarray(
+            [[cycle.birth, cycle.death] for cycle in self.persistent_cycles_],
+            dtype=float,
+        ).reshape(-1, 2)
+        reference_junctions = list(getattr(self, "junctions_", []))
+        reference_endpoints = list(getattr(self, "endpoints_", []))
+        reference_routes = [spline.samples for spline in self.routes_[:backbone_count]]
+        reference_ribs = [spline.samples for spline in self.routes_[backbone_count:]]
+        run_count = int(max(
+            self.stability_runs,
+            self.rib_stability_runs if reference_ribs else self.stability_runs,
+        ))
+        tolerance = 4.0 * max(float(self.local_scale_), 1e-8)
+
         for run in range(run_count):
-            indices = rng.choice(len(original), size=sample_size, replace=False)
-            sample = np.asarray(original[indices], dtype=float).copy()
-            if self.stability_jitter > 0.0:
-                scale = max(self.local_scale_, 1e-12) * self.stability_jitter
-                sample += rng.normal(0.0, scale, size=sample.shape)
+            indices = subsample_indices(len(original), self.stability_fraction, self.random_state + run + 1)
+            sample = jitter_points(
+                np.asarray(original[indices], dtype=float),
+                jitter=self.stability_jitter,
+                local_scale=self.local_scale_,
+                rng=rng,
+            )
             try:
                 probe = SkeletalEmbedding(
                     n_centroids=min(self.n_centroids, len(sample)),
@@ -2123,52 +2179,197 @@ class SkeletalEmbedding:
                     initialization=self.initialization,
                     persistence_threshold=self.persistence_threshold,
                     spline_smoothing=self.spline_smoothing,
+                    spline_control_mode=self.spline_control_mode,
                     max_cycles=self.max_cycles,
                     random_state=self.random_state + run + 1,
                     standardize=self.standardize,
-                    max_residual_dim=0,
+                    merge_junction_distance=self.merge_junction_distance,
+                    prune_short_branches=self.prune_short_branches,
+                    prune_branch_factor=self.prune_branch_factor,
+                    persistence_max_points=self.persistence_max_points,
+                    spline_samples_per_node=self.spline_samples_per_node,
+                    linear_structure_tolerance=self.linear_structure_tolerance,
+                    topology_neighbors=self.topology_neighbors,
+                    mutual_knn=self.mutual_knn,
+                    add_mst=self.add_mst,
+                    max_residual_dim=self.max_residual_dim if self.stability_residual_subspaces else 0,
+                    residual_pca_bandwidth=self.residual_pca_bandwidth,
+                    residual_subspace_smoothness=self.residual_subspace_smoothness,
                     detect_cycles=self.detect_cycles,
                     detect_junctions=self.detect_junctions,
+                    junction_scales=self.junction_scales,
+                    junction_inner_fraction=self.junction_inner_fraction,
+                    junction_confidence=self.junction_confidence,
                     use_local_pca=self.use_local_pca,
+                    local_pca_neighbors=self.local_pca_neighbors,
+                    max_branch_angle_degrees=self.max_branch_angle_degrees,
+                    use_effective_resistance=self.use_effective_resistance,
+                    use_electrical_flow=self.use_electrical_flow,
+                    use_kron_reduction=self.use_kron_reduction,
+                    routing_length_weight=self.routing_length_weight,
+                    routing_tangent_weight=self.routing_tangent_weight,
+                    routing_density_weight=self.routing_density_weight,
+                    routing_resistance_weight=self.routing_resistance_weight,
+                    routing_current_weight=self.routing_current_weight,
+                    use_tangent_boundary_conditions=self.use_tangent_boundary_conditions,
                     use_mip=self.use_mip,
-                    coverage_refinement=False,
+                    coverage_refinement=bool(self.coverage_refinement and len(reference_ribs)),
+                    coverage_error_tolerance=self.coverage_error_tolerance,
+                    coverage_relative_tolerance=self.coverage_relative_tolerance,
+                    coverage_quantile=self.coverage_quantile,
+                    coverage_max_iterations=self.coverage_max_iterations,
+                    coverage_max_ribs=self.coverage_max_ribs,
+                    coverage_max_candidates_per_iteration=self.coverage_max_candidates_per_iteration,
+                    coverage_candidate_spacing=self.coverage_candidate_spacing,
+                    coverage_min_error=self.coverage_min_error,
+                    coverage_min_gain=self.coverage_min_gain,
+                    coverage_length_penalty=self.coverage_length_penalty,
+                    coverage_rib_penalty=self.coverage_rib_penalty,
+                    coverage_junction_penalty=self.coverage_junction_penalty,
+                    coverage_selection=self.coverage_selection,
+                    rib_candidate_type=self.rib_candidate_type,
                     stability_selection=False,
                 ).fit(sample)
             except (ValueError, RuntimeError, np.linalg.LinAlgError):
                 continue
-            junction_counts.append(len(getattr(probe, "junctions_", [])))
-            route_counts.append(len(getattr(probe, "routes_", [])))
-            probe_cycles = int(getattr(probe, "persistent_cycle_count_", 0))
-            if probe_cycles:
-                cycle_hits[: min(len(cycle_hits), probe_cycles)] += 1.0
-        if run_count:
-            cycle_support = cycle_hits / run_count
-        else:
-            cycle_support = cycle_hits
-        self.cycle_support_ = cycle_support
-        for cycle, support in zip(self.persistent_cycles_, cycle_support):
+
+            successful_runs += 1
+            probe_diagram = np.asarray(
+                [[cycle.birth, cycle.death] for cycle in getattr(probe, "persistent_cycles_", [])],
+                dtype=float,
+            ).reshape(-1, 2)
+            cycle_hits += match_cycles(
+                reference_diagram,
+                probe_diagram,
+                tolerance=1.0,
+            )
+            junction_match = match_regions(
+                reference_junctions,
+                list(getattr(probe, "junctions_", [])),
+                tolerance=tolerance,
+                require_branch_count=True,
+            )
+            endpoint_match = match_regions(
+                reference_endpoints,
+                list(getattr(probe, "endpoints_", [])),
+                tolerance=tolerance,
+            )
+            junction_hits += junction_match
+            endpoint_hits += endpoint_match
+            probe_backbone_count = int(getattr(probe, "backbone_element_count_", len(probe.routes_)))
+            route_match = match_routes(
+                reference_routes,
+                [spline.samples for spline in probe.routes_[:probe_backbone_count]],
+                tolerance=tolerance,
+            )
+            route_hits[:len(route_match)] += route_match
+            if reference_ribs:
+                rib_match = match_routes(
+                    reference_ribs,
+                    [spline.samples for spline in probe.routes_[probe_backbone_count:]],
+                    tolerance=tolerance,
+                )
+                rib_hits[:len(rib_match)] += rib_match
+
+            for reference_index, matched in enumerate(junction_match):
+                if not matched or reference_index >= len(reference_junctions):
+                    continue
+                reference = reference_junctions[reference_index]
+                probe_regions = list(getattr(probe, "junctions_", []))
+                if reference_index >= len(probe_regions):
+                    continue
+                left = np.asarray(self.junction_branch_directions_.get(reference.node_id, []), dtype=float)
+                right = np.asarray(probe.junction_branch_directions_.get(probe_regions[reference_index].node_id, []), dtype=float)
+                if len(left) and len(right):
+                    angles = np.arccos(np.clip(np.abs(left @ right.T), -1.0, 1.0))
+                    direction_angles[reference_index] = direction_angles.get(reference_index, []) + [float(np.min(angles, axis=1).mean())]
+
+            if self.stability_residual_subspaces and self.residual_dim_:
+                for route, matched in enumerate(route_match):
+                    if not matched or route >= len(probe.residual_bases_):
+                        continue
+                    reference_basis = self.residual_bases_[route]
+                    candidate_basis = probe.residual_bases_[route]
+                    sample_count = min(len(reference_basis), len(candidate_basis))
+                    if sample_count:
+                        positions = np.linspace(0, sample_count - 1, min(16, sample_count)).astype(int)
+                        residual_angles[route].extend(
+                            subspace_principal_angle(reference_basis[index], candidate_basis[index])
+                            for index in positions
+                        )
+
+        denominator = max(successful_runs, 1)
+        self.cycle_support_ = cycle_hits / denominator
+        self.junction_support_ = junction_hits / denominator
+        self.endpoint_support_ = endpoint_hits / denominator
+        self.route_support_ = route_hits / denominator
+        self.rib_support_ = (rib_hits / denominator).tolist()
+        self.rib_stability_ = list(self.rib_support_)
+        for cycle, support in zip(self.persistent_cycles_, self.cycle_support_):
             cycle.stability_support = float(support)
-        junction_support = (
-            float(np.mean(np.asarray(junction_counts) == len(self.junctions_)))
-            if junction_counts else 0.0
-        )
-        route_support = (
-            float(np.mean(np.asarray(route_counts) == len(self.routes_)))
-            if route_counts else 0.0
-        )
-        self.junction_support_ = np.full(len(self.junctions_), junction_support)
-        self.endpoint_support_ = np.full(len(self.endpoints_), junction_support)
-        self.route_support_ = np.full(len(self.routes_), route_support)
+        self.consensus_cycle_count_ = int(np.sum(self.cycle_support_ >= self.stability_min_support))
+        self.consensus_junction_count_ = int(np.sum(self.junction_support_ >= self.stability_min_support))
+        self.junction_consensus_ = [
+            {"center": region.center.copy(), "branch_count": region.branch_count, "support": float(support)}
+            for region, support in zip(reference_junctions, self.junction_support_)
+        ]
+        self.endpoint_consensus_ = [
+            {"center": region.center.copy(), "support": float(support)}
+            for region, support in zip(reference_endpoints, self.endpoint_support_)
+        ]
+        self.route_consensus_ = [
+            {"route": index, "support": float(support)}
+            for index, support in enumerate(self.route_support_)
+        ]
+        self.branch_direction_support_ = {
+            index: float(np.mean(np.asarray(values) <= np.deg2rad(self.max_branch_angle_degrees)))
+            for index, values in direction_angles.items()
+        }
+        self.branch_direction_dispersion_ = {
+            index: float(np.std(values)) for index, values in direction_angles.items()
+        }
+        if self.stability_residual_subspaces and self.residual_dim_:
+            self.residual_subspace_stability_ = {
+                route: {
+                    "mean_principal_angle": float(np.mean(values)) if values else float("inf"),
+                    "dispersion": float(np.std(values)) if values else float("inf"),
+                    "support": float(len(values) / max(successful_runs, 1)),
+                }
+                for route, values in enumerate(residual_angles)
+            }
+        else:
+            self.residual_subspace_stability_ = None
         self.stability_summary_ = {
             "enabled": True,
             "runs": run_count,
-            "successful_runs": len(junction_counts),
+            "successful_runs": successful_runs,
             "min_support": self.stability_min_support,
             "cycle_support": self.cycle_support_.copy(),
-            "junction_support": junction_support,
-            "route_support": route_support,
+            "junction_support": self.junction_support_.copy(),
+            "endpoint_support": self.endpoint_support_.copy(),
+            "route_support": self.route_support_.copy(),
+            "rib_support": np.asarray(self.rib_support_, dtype=float),
+            "consensus_cycle_count": self.consensus_cycle_count_,
+            "consensus_junction_count": self.consensus_junction_count_,
         }
-        self.stability_residual_subspaces_ = None
+        if reference_ribs and self.rib_stability_runs is not None:
+            keep = np.asarray(self.rib_support_, dtype=float) >= self.rib_min_support
+            if not np.all(keep):
+                kept_indices = [index for index, selected in enumerate(keep) if selected]
+                self.routes_ = self.routes_[:backbone_count] + [
+                    self.routes_[backbone_count + index] for index in kept_indices
+                ]
+                self.route_chains_ = self.route_chains_[:backbone_count] + [
+                    self.route_chains_[backbone_count + index] for index in kept_indices
+                ]
+                self.rib_paths_ = [self.rib_paths_[index] for index in kept_indices]
+                self.rib_support_ = [self.rib_support_[index] for index in kept_indices]
+                self.rib_stability_ = [self.rib_stability_[index] for index in kept_indices]
+                self.rib_graph_ = _LandmarkGraph()
+                self.coverage_intersections_ = []
+                standardized = (original - self.mean_) / self.scale_
+                self._refit_after_ribs(original, standardized)
+                self._initialize_skeleton_metadata()
 
     def _project_centerline(self, X: Array | Sequence[Sequence[float]]) -> EmbeddingResult:
         original = _as_point_cloud(X)

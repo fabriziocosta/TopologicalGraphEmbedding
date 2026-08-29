@@ -190,6 +190,16 @@ def display_interactive_controls(datasets):
     """Display the shared interactive viewer for synthetic datasets."""
     from .interactive import display_interactive_viewer
 
+    def regenerate(n_points, noise):
+        return build_datasets(
+            n=int(n_points),
+            noise=float(noise),
+            hypercube_noise=float(noise) * 0.055 / 0.045,
+            random_state=0,
+        )
+
+    first_dataset = next(iter(datasets.values()))
+    first_points = first_dataset[0] if isinstance(first_dataset, tuple) else first_dataset
     return display_interactive_viewer(
         datasets,
         default_reducer="pca",
@@ -197,4 +207,7 @@ def display_interactive_controls(datasets):
         default_max_cycles=5,
         default_persistence_max_points=300,
         default_persistence_threshold=4.0,
+        dataset_factory=regenerate,
+        default_n_points=len(first_points),
+        default_noise=0.045,
     )

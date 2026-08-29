@@ -54,6 +54,7 @@ def propose_ribs(
     result: Any,
     *,
     max_candidates: int,
+    candidate_type: str = "transverse",
 ) -> list[RibCandidate]:
     """Generate sparse local parallel/transverse rib proposals.
 
@@ -127,13 +128,15 @@ def propose_ribs(
             local_error - np.asarray(distances2[local], dtype=float), 0.0
         )
         gain = float(np.sum(local_gain))
-        candidate_type = "transverse" if len(positive) and len(negative) else "parallel"
+        inferred_type = "transverse" if len(positive) and len(negative) else "parallel"
+        if candidate_type != "both" and inferred_type != candidate_type:
+            continue
         proposals.append(
             RibCandidate(
                 points=support_scaled,
                 seed_index=seed,
                 source_element=source,
-                candidate_type=candidate_type,
+                candidate_type=inferred_type,
                 coverage_gain=gain,
                 support=float(len(side) / max(len(local), 1)),
                 spline=spline,

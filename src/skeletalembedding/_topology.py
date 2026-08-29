@@ -1263,3 +1263,71 @@ def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
             break
         anchors.append(next_anchor)
     return anchors[:target]
+
+
+def _approximate_cycle_representatives(
+    graph: _WeightedKNNGraph,
+    count: int,
+) -> list[Array]:
+    """Return deterministic point-level fundamental-cycle representatives.
+
+    Persistent-homology backends used by the lightweight package expose the
+    diagram consistently but do not all expose cocycles.  A minimum spanning
+    forest plus non-tree chords gives a useful, reproducible geometric
+    representative without adding a backend dependency.
+    """
+    if count <= 0 or not graph.edges:
+        return []
+    parent = list(range(len(graph.points)))
+    tree: dict[int, list[int]] = {node: [] for node in range(len(graph.points))}
+    chords: list[tuple[float, tuple[int, int]]] = []
+
+    def find(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def union(left: int, right: int) -> bool:
+        left_root, right_root = find(left), find(right)
+        if left_root == right_root:
+            return False
+        parent[right_root] = left_root
+        return True
+
+    for edge, length in sorted(graph.edges.items(), key=lambda item: (item[1], item[0])):
+        left, right = edge
+        if union(left, right):
+            tree[left].append(right)
+            tree[right].append(left)
+        else:
+            chords.append((float(length), edge))
+
+    def tree_path(source: int, target: int) -> list[int]:
+        previous: dict[int, int] = {source: -1}
+        queue = [source]
+        for node in queue:
+            if node == target:
+                break
+            for neighbour in sorted(tree[node]):
+                if neighbour not in previous:
+                    previous[neighbour] = node
+                    queue.append(neighbour)
+        if target not in previous:
+            return []
+        path = [target]
+        while path[-1] != source:
+            path.append(previous[path[-1]])
+        return path[::-1]
+
+    scored: list[tuple[float, list[int]]] = []
+    for chord_length, (left, right) in chords:
+        path = tree_path(left, right)
+        if len(path) < 3:
+            continue
+        tree_length = sum(
+            float(graph.edges[graph.key(a, b)]) for a, b in pairwise(path)
+        )
+        scored.append((tree_length / max(chord_length, 1e-12), path + [left]))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [graph.points[np.asarray(path, dtype=int)].copy() for _, path in scored[:count]]

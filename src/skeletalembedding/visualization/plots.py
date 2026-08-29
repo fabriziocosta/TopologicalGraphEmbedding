@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap, to_rgba
 from matplotlib.patches import Circle
 from scipy.stats import spearmanr
 from sklearn.base import clone
@@ -28,6 +27,27 @@ _REGRESSION_CMAP = LinearSegmentedColormap.from_list(
         '#050b12',
     ],
 )
+_DARK_ROUTE_PALETTE = (
+    '#123f5a',
+    '#8c2f39',
+    '#246a5b',
+    '#5a3d78',
+    '#a24b2a',
+    '#365486',
+    '#665126',
+    '#3d566e',
+)
+_LIGHT_POINT_PALETTE = (
+    '#a9cbe0',
+    '#efaaa9',
+    '#a5d0c5',
+    '#c5addb',
+    '#edbd98',
+    '#aebfe0',
+    '#ddca91',
+    '#a9bdc9',
+)
+_LIGHT_POINT_CMAP = ListedColormap(_LIGHT_POINT_PALETTE, name='light_points')
 
 
 def evaluate_route_classification(
@@ -283,7 +303,7 @@ def _target_scatter(axis, x, y, labels, **kwargs):
         _, values = np.unique(values, return_inverse=True)
     scatter_kwargs = {
         'c': values,
-        'cmap': _REGRESSION_CMAP if continuous else 'tab10',
+        'cmap': _REGRESSION_CMAP if continuous else _LIGHT_POINT_CMAP,
         **kwargs,
     }
     if continuous:
@@ -297,7 +317,8 @@ def _target_scatter(axis, x, y, labels, **kwargs):
 def route_colors(model: Any) -> np.ndarray:
     """Return stable route colors shared by every display mode."""
     count = max(1, len(model.routes_))
-    return plt.get_cmap('tab20', count)(np.arange(count))
+    palette = np.asarray([to_rgba(color) for color in _DARK_ROUTE_PALETTE])
+    return palette[np.arange(count) % len(palette)]
 
 
 def plot_labeled_graph(axis, points, labels, model, title, colors=None):
@@ -309,7 +330,7 @@ def plot_labeled_graph(axis, points, labels, model, title, colors=None):
         curve = spline.samples * model.scale_ + model.mean_
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
-        axis.plot(curve[:, 0], curve[:, 1], color=colors[index], linewidth=2.6)
+        axis.plot(curve[:, 0], curve[:, 1], color=colors[index], linewidth=3.0)
     _plot_stations(axis, model, transform=lambda values: values * model.scale_ + model.mean_)
     axis.set_title(title)
     axis.set_aspect('equal', adjustable='datalim')
@@ -331,7 +352,7 @@ def plot_projected_graph(axis, points, labels, model, title, reducer, colors=Non
         curve = reducer.transform(curve)
         if spline.closed:
             curve = np.vstack([curve, curve[0]])
-        axis.plot(curve[:, 0], curve[:, 1], color=colors[index], linewidth=2.6)
+        axis.plot(curve[:, 0], curve[:, 1], color=colors[index], linewidth=3.0)
     _plot_stations(axis, model, transform=lambda values: reducer.transform(
         values * model.scale_ + model.mean_
     ))
@@ -493,7 +514,7 @@ def plot_metro_lines(axis, model, title, layout=None, colors=None):
             curve = np.vstack([curve, curve[0]])
         axis.plot(
             curve[:, 0], curve[:, 1],
-            color=colors[index], linewidth=2.6, solid_capstyle='round', zorder=3,
+            color=colors[index], linewidth=3.0, solid_capstyle='round', zorder=3,
         )
     _plot_metro_stations(axis, model, layout)
     _format_metro_axis(axis, title)

@@ -1,6 +1,6 @@
 """Sparse topology-aware skeletal embeddings."""
 
-from .embedding import SkeletalEmbedding
+from .estimator import SkeletalEmbedding
 from .results import EmbeddingResult
 
 __all__ = [
