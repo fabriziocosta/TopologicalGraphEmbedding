@@ -325,6 +325,16 @@ def display_interactive_viewer(
         description="rib candidates / iteration", continuous_update=False,
         style=style, layout=control_width,
     )
+    coverage_spacing_slider = widgets.FloatSlider(
+        value=0.0, min=0.0, max=2.0, step=0.025,
+        readout_format=".3f", description="candidate spacing (0=auto)",
+        continuous_update=False, style=style, layout=control_width,
+    )
+    coverage_min_error_slider = widgets.FloatSlider(
+        value=0.0, min=0.0, max=2.0, step=0.025,
+        readout_format=".3f", description="minimum seed error (0=auto)",
+        continuous_update=False, style=style, layout=control_width,
+    )
     coverage_length_penalty_slider = widgets.FloatSlider(
         value=0.0, min=0.0, max=2.0, step=0.05,
         readout_format=".2f", description="rib length penalty",
@@ -366,6 +376,16 @@ def display_interactive_viewer(
     stability_residual_checkbox = widgets.Checkbox(
         value=False, description="stable residual subspaces", style=style,
         layout=control_width,
+    )
+    rib_stability_runs_slider = widgets.IntSlider(
+        value=0, min=0, max=30, step=1,
+        description="rib stability runs (0=off)", continuous_update=False,
+        style=style, layout=control_width,
+    )
+    rib_min_support_slider = widgets.FloatSlider(
+        value=0.6, min=0.0, max=1.0, step=0.05,
+        readout_format=".2f", description="minimum rib support",
+        continuous_update=False, style=style, layout=control_width,
     )
     reducer_selector = widgets.Dropdown(
         options=[
@@ -490,6 +510,8 @@ def display_interactive_viewer(
             rib_candidate_type_selector.value,
             coverage_gain_slider.value,
             coverage_candidates_slider.value,
+            coverage_spacing_slider.value,
+            coverage_min_error_slider.value,
             coverage_length_penalty_slider.value,
             coverage_rib_penalty_slider.value,
             coverage_junction_penalty_slider.value,
@@ -499,6 +521,8 @@ def display_interactive_viewer(
             stability_support_slider.value,
             stability_jitter_slider.value,
             stability_residual_checkbox.value,
+            rib_stability_runs_slider.value,
+            rib_min_support_slider.value,
             reducer_selector.value,
             umap_neighbors_slider.value,
             dispersion_slider.value,
@@ -577,6 +601,12 @@ def display_interactive_viewer(
             rib_candidate_type=rib_candidate_type_selector.value,
             coverage_min_gain=coverage_gain_slider.value,
             coverage_max_candidates_per_iteration=coverage_candidates_slider.value,
+            coverage_candidate_spacing=(
+                None if coverage_spacing_slider.value == 0 else coverage_spacing_slider.value
+            ),
+            coverage_min_error=(
+                None if coverage_min_error_slider.value == 0 else coverage_min_error_slider.value
+            ),
             coverage_length_penalty=coverage_length_penalty_slider.value,
             coverage_rib_penalty=coverage_rib_penalty_slider.value,
             coverage_junction_penalty=coverage_junction_penalty_slider.value,
@@ -586,6 +616,10 @@ def display_interactive_viewer(
             stability_min_support=stability_support_slider.value,
             stability_jitter=stability_jitter_slider.value,
             stability_residual_subspaces=stability_residual_checkbox.value,
+            rib_stability_runs=(
+                None if rib_stability_runs_slider.value == 0 else rib_stability_runs_slider.value
+            ),
+            rib_min_support=rib_min_support_slider.value,
         )
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -729,6 +763,8 @@ def display_interactive_viewer(
                     rib_candidate_type_selector,
                     coverage_gain_slider,
                     coverage_candidates_slider,
+                    coverage_spacing_slider,
+                    coverage_min_error_slider,
                     coverage_length_penalty_slider,
                     coverage_rib_penalty_slider,
                     coverage_junction_penalty_slider,
@@ -742,6 +778,8 @@ def display_interactive_viewer(
                     stability_support_slider,
                     stability_jitter_slider,
                     stability_residual_checkbox,
+                    rib_stability_runs_slider,
+                    rib_min_support_slider,
                 ),
                 _section(
                     widgets,
