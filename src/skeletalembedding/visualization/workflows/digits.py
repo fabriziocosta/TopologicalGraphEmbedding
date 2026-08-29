@@ -33,7 +33,7 @@ def make_spiral(n_samples: int = 500, noise: float = 0.045, turns: float = 1.15,
 
 def lift_planar_dataset(dataset, z_noise: float = 0.045, random_state: int = 0):
     """Add independent Z noise while retaining the planar signal."""
-    points, _labels = dataset
+    points, labels = dataset
     points = np.asarray(points, dtype=float)
     rng = np.random.default_rng(random_state)
     return np.column_stack([points, rng.normal(scale=z_noise, size=len(points))]), np.asarray(labels)
@@ -71,7 +71,7 @@ def build_dataset_catalog(n_samples: int = 500, random_state: int = 0) -> tuple[
 
 def fit_catalog_entry(name: str, dataset: Any, *, smoothness: float = 0.02, random_state: int = 0):
     """Fit one catalogue entry with notebook-compatible defaults."""
-    points, labels = dataset
+    points, _labels = dataset
     is_planar = name.startswith(("synthetic/", "toy/"))
     is_binary_tree = name == "synthetic/binary-tree"
     model = SkeletalEmbedding(
