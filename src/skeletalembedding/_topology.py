@@ -1198,10 +1198,24 @@ def _normalize_persistence_diagram(diagram: Array, scale: float) -> Array:
     return result
 
 
-def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
-    """Choose graph vertices near the strongest fundamental cycle candidates."""
+def _cycle_anchor_vertices(
+    graph: _WeightedKNNGraph,
+    count: int,
+    excluded_vertices: set[int] | None = None,
+) -> list[int]:
+    """Choose graph vertices near the strongest fundamental cycle candidates.
+
+    ``excluded_vertices`` is used when another topological feature has already
+    claimed a terminal arm, such as the stem of a loop-with-branch shape.
+    Dense kNN graphs contain many short noise cycles, so allowing those points
+    to seed the logical cycle can make the stem appear to be part of the loop.
+    """
     if count <= 0 or len(graph.points) == 0:
         return []
+    excluded = {
+        int(vertex) for vertex in (excluded_vertices or set())
+        if 0 <= int(vertex) < len(graph.points)
+    }
     parent = list(range(len(graph.points)))
 
     def find(node: int) -> int:
@@ -1258,6 +1272,8 @@ def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
     anchors: list[int] = []
     for _, left, right in scored:
         for vertex in (left, right):
+            if vertex in excluded:
+                continue
             if vertex not in anchors:
                 anchors.append(vertex)
             if len(anchors) >= max(3, 3 * count):
@@ -1266,7 +1282,13 @@ def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
     # Use the strongest cycle edge only as a reproducible seed, then spread
     # anchors around the corresponding support rather than retaining several
     # adjacent vertices from the same local kNN chord.
-    anchors = [anchors[0]] if anchors else [0]
+    if not anchors:
+        available = [vertex for vertex in range(len(graph.points)) if vertex not in excluded]
+        if not available:
+            return []
+        anchors = [available[0]]
+    else:
+        anchors = [anchors[0]]
     while len(anchors) < target and len(anchors) < len(graph.points):
         distances = np.min(
             np.asarray([
@@ -1276,6 +1298,8 @@ def _cycle_anchor_vertices(graph: _WeightedKNNGraph, count: int) -> list[int]:
             axis=0,
         )
         distances[anchors] = -np.inf
+        if excluded:
+            distances[list(excluded)] = -np.inf
         next_anchor = int(np.argmax(distances))
         if not np.isfinite(distances[next_anchor]):
             break

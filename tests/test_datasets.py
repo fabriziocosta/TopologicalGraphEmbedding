@@ -6,6 +6,7 @@ from skeletalembedding.datasets import (
     noisy_binary_tree,
     noisy_polygon_rays_circles,
     noisy_star,
+    noisy_torus,
 )
 
 
@@ -119,6 +120,24 @@ def test_polygon_rays_circles_is_registered_with_synthetic_datasets():
 def test_polygon_side_count_is_exposed_by_dataset_generator():
     with pytest.raises(ValueError, match="n_sides"):
         generate_synthetic_datasets(n=8, polygon_sides=2)
+
+
+def test_torus_is_reproducible_and_three_dimensional():
+    first = noisy_torus(n=240, noise=0.02, rng=np.random.default_rng(12))
+    second = noisy_torus(n=240, noise=0.02, rng=np.random.default_rng(12))
+
+    assert first.shape == (240, 3)
+    assert np.all(np.isfinite(first))
+    assert np.array_equal(first, second)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"major_radius": 0.3, "minor_radius": 0.3}, {"major_radius": 1.0, "minor_radius": 0.0}],
+)
+def test_torus_rejects_invalid_geometry(kwargs):
+    with pytest.raises(ValueError):
+        noisy_torus(**kwargs)
 
 
 @pytest.mark.parametrize(

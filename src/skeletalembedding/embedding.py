@@ -901,6 +901,7 @@ class SkeletalEmbedding:
                     for junction in junctions
                 )
             ]
+        loop_branch_endpoint_center: Array | None = None
         if junctions and not self.linear_structure_:
             closed_multi_junction = (
                 self.requested_cycle_count_ > 0 and len(junctions) >= 2
@@ -962,6 +963,34 @@ class SkeletalEmbedding:
             if len(endpoints) > desired_endpoints:
                 endpoints.sort(key=lambda region: region.confidence, reverse=True)
                 endpoints = endpoints[:desired_endpoints]
+            if (
+                self.requested_cycle_count_ == 1
+                and desired_endpoints == 1
+                and len(junctions) == 1
+                and junctions[0].branch_count == 3
+                and leaves
+            ):
+                # A centroid MST breaks a loop at two arbitrary leaves.  The
+                # remaining leaf is the actual terminal arm of a
+                # loop-with-branch, but local annulus votes can prefer one of
+                # the artificial loop breaks.  Select the coarse leaf nearest
+                # the junction and keep its region out of cycle anchoring.
+                junction_center = junctions[0].center
+                branch_leaf = min(
+                    leaves,
+                    key=lambda node: np.linalg.norm(
+                        coarse_graph.nodes[node] - junction_center
+                    ),
+                )
+                loop_branch_endpoint_center = coarse_graph.nodes[branch_leaf].copy()
+                endpoint_member = int(np.argmin(
+                    np.sum((points - loop_branch_endpoint_center) ** 2, axis=1)
+                ))
+                endpoints = [EndpointRegion(
+                    loop_branch_endpoint_center.copy(),
+                    0.9,
+                    [endpoint_member],
+                )]
         if (
             len(routing_components) > 1
             and self.requested_cycle_count_ >= len(routing_components)
@@ -1049,7 +1078,23 @@ class SkeletalEmbedding:
                     selected_component.append(int(component[next_index]))
                 anchor_vertices.extend(selected_component)
         else:
-            anchor_vertices = _cycle_anchor_vertices(routing_graph, cycle_target)
+            excluded_vertices: set[int] = set()
+            if loop_branch_endpoint_center is not None:
+                exclusion_radius = max(
+                    6.0 * self.local_scale_,
+                    0.25 * np.linalg.norm(
+                        loop_branch_endpoint_center - junctions[0].center
+                    ),
+                )
+                excluded_vertices = set(np.flatnonzero(
+                    np.linalg.norm(points - loop_branch_endpoint_center, axis=1)
+                    <= exclusion_radius
+                ).astype(int))
+            anchor_vertices = _cycle_anchor_vertices(
+                routing_graph,
+                cycle_target,
+                excluded_vertices=excluded_vertices,
+            )
         if hypercube_junctions_detected:
             # The eight cube corners already provide the complete logical
             # vertex set.  Adding persistence anchors between them would

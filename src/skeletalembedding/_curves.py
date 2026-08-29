@@ -9,15 +9,24 @@ from typing import Any
 import numpy as np
 
 try:
-    from scipy.interpolate import splev, splprep
+    from scipy.interpolate import splev, splprep, splrep
 except ImportError as exc:  # pragma: no cover
     splev = None
     splprep = None
+    splrep = None
     _SCIPY_IMPORT_ERROR = exc
 else:
     _SCIPY_IMPORT_ERROR = None
 
 Array = np.ndarray
+
+
+def _evaluate_tck(values: Array, tck: Any) -> Array:
+    """Evaluate either a parametric or coordinate-wise spline representation."""
+    if isinstance(tck, tuple) and tck and isinstance(tck[0], tuple):
+        return np.column_stack([splev(values, coordinate_tck) for coordinate_tck in tck])
+    return np.asarray(splev(values, tck)).T
+
 
 def _catmull_rom(points: Array, t: Array, closed: bool) -> Array:
     """Fallback cubic curve evaluator used when SciPy is unavailable."""
@@ -73,7 +82,7 @@ class _SplineRoute:
         else:
             values = np.clip(values, 0.0, 1.0)
         if self.tck is not None and splev is not None:
-            evaluated = np.asarray(splev(values, self.tck)).T
+            evaluated = _evaluate_tck(values, self.tck)
         else:
             evaluated = _catmull_rom(self.samples, values, self.closed)
         if not self.closed:
@@ -173,9 +182,20 @@ def _fit_curve(
 ) -> _SplineRoute:
     points = np.asarray(points, dtype=float)
     fit_weights = None if weights is None else np.asarray(weights, dtype=float)
+    if fit_weights is not None and len(fit_weights) != len(points):
+        fit_weights = None
+    if len(points) > 1:
+        distinct = np.r_[
+            True,
+            np.linalg.norm(np.diff(points, axis=0), axis=1) > 1e-12,
+        ]
+        if not np.all(distinct):
+            points = points[distinct]
+            if fit_weights is not None:
+                fit_weights = fit_weights[distinct]
     if closed and len(points) > 1 and np.allclose(points[0], points[-1]):
         points = points[:-1]
-        if fit_weights is not None and len(fit_weights) > len(points):
+        if fit_weights is not None:
             fit_weights = fit_weights[:-1]
     if not closed and len(points) >= 2 and (start_tangent is not None or end_tangent is not None):
         span = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
@@ -237,13 +257,36 @@ def _fit_curve(
     # smoothing.
     fit_smoothing = min(float(smoothing), 0.25) if closed else float(smoothing)
     # FITPACK's parametric spline implementation supports at most ten
-    # coordinate dimensions.  High-dimensional embeddings intentionally use
-    # the deterministic NumPy fallback without producing one warning per
-    # route.
+    # coordinate dimensions.  High-dimensional embeddings use one univariate
+    # FITPACK spline per coordinate instead.
     scipy_supported_dimension = points.shape[1] < 11
-    if splprep is not None and len(points) >= 3 and scipy_supported_dimension:
+    if splprep is not None and splrep is not None and len(points) >= 3:
         degree = min(3, len(points) - 1)
-        smoothing_factor = max(0.0, fit_smoothing) * len(points)
+
+        def fit_tck(smoothing_value: float) -> Any:
+            smoothing_factor = max(0.0, smoothing_value) * len(points)
+            if scipy_supported_dimension:
+                fitted, _ = splprep(
+                    points.T,
+                    w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
+                    u=t,
+                    s=smoothing_factor,
+                    per=closed,
+                    k=degree,
+                )
+                return fitted
+            return tuple(
+                splrep(
+                    t,
+                    coordinate,
+                    w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
+                    s=smoothing_factor,
+                    per=closed,
+                    k=degree,
+                )
+                for coordinate in points.T
+            )
+
         for _ in range(8):
             try:
                 # FITPACK can report that a small requested smoothing value is
@@ -256,17 +299,10 @@ def _fit_curve(
                         message='A theoretically impossible result when finding a smoothing spline.*',
                         category=RuntimeWarning,
                     )
-                    tck, _ = splprep(
-                        points.T,
-                        w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
-                        u=t,
-                        s=smoothing_factor,
-                        per=closed,
-                        k=degree,
-                    )
+                    tck = fit_tck(fit_smoothing)
                 break
             except RuntimeWarning:
-                smoothing_factor = max(1e-6, 2.0 * smoothing_factor)
+                fit_smoothing = max(1e-6, 2.0 * fit_smoothing)
                 tck = None
             except Exception as exc:  # noqa: BLE001 - backend failure uses explicit fallback
                 warnings.warn(
@@ -277,17 +313,20 @@ def _fit_curve(
                 tck = None
                 break
         if tck is not None:
-            backend = "scipy"
+            backend = "scipy" if scipy_supported_dimension else "scipy-coordinate"
     count = max(32, int(sample_count))
     sample_t = np.linspace(0.0, 1.0, count, endpoint=not closed)
     if tck is not None and splev is not None:
         control_min = np.min(points, axis=0)
         control_max = np.max(points, axis=0)
         control_span = np.maximum(control_max - control_min, 1e-8)
-        active_dimensions = control_span > 0.1 * np.max(control_span)
+        # A thin measurement-noise dimension should be allowed to smooth out;
+        # only dimensions spanning a substantial part of the route define its
+        # topology-preserving shape.
+        active_dimensions = control_span > 0.25 * np.max(control_span)
         margin = np.maximum(0.25 * control_span, 1e-3)
         def check_candidate(candidate_tck: Any) -> tuple[Array, bool, bool]:
-            candidate = np.asarray(splev(sample_t, candidate_tck)).T
+            candidate = _evaluate_tck(sample_t, candidate_tck)
             sample_span = np.ptp(candidate, axis=0)
             # Preserve the broad shape of every active loop dimension. More
             # aggressive fits are backed off below rather than replaced by
@@ -318,14 +357,7 @@ def _fit_curve(
             for _ in range(12):
                 trial = 0.5 * (lower + upper)
                 try:
-                    trial_tck, _ = splprep(
-                        points.T,
-                        w=fit_weights if fit_weights is not None and len(fit_weights) == len(points) else None,
-                        u=t,
-                        s=max(0.0, trial) * len(points),
-                        per=True,
-                        k=degree,
-                    )
+                    trial_tck = fit_tck(trial)
                     trial_samples, trial_collapse, trial_overshoot = check_candidate(trial_tck)
                 except Exception:  # noqa: BLE001 - invalid trial uses a lower smoothing value
                     upper = trial

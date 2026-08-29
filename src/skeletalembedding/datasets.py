@@ -76,6 +76,30 @@ def noisy_figure_eight(n: int = 500, noise: float = 0.045, rng: np.random.Genera
     return _add_noise(points, noise, rng)
 
 
+def noisy_torus(
+    n: int = 500,
+    noise: float = 0.045,
+    rng: np.random.Generator | None = None,
+    *,
+    major_radius: float = 1.0,
+    minor_radius: float = 0.35,
+) -> np.ndarray:
+    """Sample a noisy point cloud from the surface of a 3D torus."""
+    if major_radius <= minor_radius or minor_radius <= 0.0:
+        raise ValueError("major_radius must exceed positive minor_radius")
+
+    rng = np.random.default_rng() if rng is None else rng
+    angles = rng.uniform(0.0, 2.0 * np.pi, size=(n, 2))
+    major_angle, minor_angle = angles.T
+    radial_distance = major_radius + minor_radius * np.cos(minor_angle)
+    points = np.column_stack([
+        radial_distance * np.cos(major_angle),
+        radial_distance * np.sin(major_angle),
+        minor_radius * np.sin(minor_angle),
+    ])
+    return _add_noise(points, noise, rng)
+
+
 def noisy_binary_tree(
     n: int = 500,
     noise: float = 0.045,
@@ -228,6 +252,7 @@ SYNTHETIC_DATASETS: dict[str, Callable[..., np.ndarray]] = {
     "star": noisy_star,
     "circle": noisy_circle,
     "figure-eight": noisy_figure_eight,
+    "torus": noisy_torus,
     "binary-tree": noisy_binary_tree,
     "loop-branch": noisy_loop_branch,
     "polygon-rays-circles": noisy_polygon_rays_circles,
@@ -242,7 +267,7 @@ def generate_synthetic_datasets(
     binary_tree_depth: int = 3,
     star_branches: int = 4,
 ) -> dict[str, np.ndarray]:
-    """Generate all seven benchmark point clouds with independent seeds.
+    """Generate all eight benchmark point clouds with independent seeds.
 
     ``polygon_sides`` controls the regular polygon in the
     ``"polygon-rays-circles"`` dataset, and ``binary_tree_depth`` controls
@@ -257,6 +282,7 @@ def generate_synthetic_datasets(
         "star": 1,
         "circle": 3,
         "figure-eight": 4,
+        "torus": 8,
         "binary-tree": 5,
         "loop-branch": 6,
         "polygon-rays-circles": 7,
@@ -296,4 +322,5 @@ __all__ = [
     "noisy_hypercube",
     "noisy_polygon_rays_circles",
     "noisy_star",
+    "noisy_torus",
 ]

@@ -310,6 +310,33 @@ def test_topological_shared_cycles_use_opposite_metro_sides():
     assert relative_centers[0] * relative_centers[1] < 0.0
 
 
+def test_topological_loop_branch_keeps_stem_open():
+    points_2d = generate_synthetic_datasets(
+        n=500, noise=0.045, random_state=0,
+    )["loop-branch"]
+    points = np.column_stack([
+        points_2d,
+        np.random.default_rng(6).normal(scale=0.045, size=len(points_2d)),
+    ])
+    model = SkeletalEmbedding(
+        n_centroids=36,
+        random_state=0,
+        initialization="skeletal",
+        persistence_threshold=4.0,
+        persistence_max_points=60,
+        spline_smoothing=0.08,
+        max_cycles=4,
+        standardize=False,
+    ).fit(points)
+
+    assert model.realized_cycle_count_ == 1
+    assert len(model.junctions_) == 1
+    assert len(model.route_chains_) == 2
+    assert sum(chain["closed"] for chain in model.route_chains_) == 1
+    endpoint = model.endpoint_regions_[0].center
+    assert endpoint[0] > 1.5
+
+
 def test_topological_complex_workflow_keeps_cycle_backbones_closed():
     from skeletalembedding.datasets import (
         noisy_hypercube,

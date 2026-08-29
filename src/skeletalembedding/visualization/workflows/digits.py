@@ -55,10 +55,19 @@ def build_dataset_catalog(n_samples: int = 500, random_state: int = 0) -> tuple[
         "toy/classification": make_classification(n_samples=n_samples, n_features=2, n_redundant=0, n_informative=2, n_clusters_per_class=1, class_sep=1.25, flip_y=0.04, random_state=3),
         "toy/gaussian-quantiles": make_gaussian_quantiles(n_samples=n_samples, n_features=2, n_classes=3, random_state=4),
     }
-    planar = {**synthetic, **toys}
     planar = {
         name: lift_planar_dataset(dataset, random_state=index)
-        for index, (name, dataset) in enumerate(planar.items())
+        for index, (name, dataset) in enumerate(synthetic.items())
+        if dataset[0].shape[1] == 2
+    }
+    planar.update({
+        name: lift_planar_dataset(dataset, random_state=index + len(synthetic))
+        for index, (name, dataset) in enumerate(toys.items())
+    })
+    three_dimensional = {
+        name: dataset
+        for name, dataset in synthetic.items()
+        if dataset[0].shape[1] == 3
     }
     high_dim = {
         "high-dimensional/digits": (load_digits().data, load_digits().target),
@@ -66,13 +75,15 @@ def build_dataset_catalog(n_samples: int = 500, random_state: int = 0) -> tuple[
         "high-dimensional/breast-cancer": (load_breast_cancer().data, load_breast_cancer().target),
         "high-dimensional/diabetes": (load_diabetes().data, load_diabetes().target),
     }
-    return {**planar, **high_dim}, set(planar)
+    return {**planar, **three_dimensional, **high_dim}, set(planar)
 
 
 def fit_catalog_entry(name: str, dataset: Any, *, smoothness: float = 0.02, random_state: int = 0):
     """Fit one catalogue entry with notebook-compatible defaults."""
     points, _labels = dataset
-    is_planar = name.startswith(("synthetic/", "toy/"))
+    is_planar = name.startswith("toy/") or (
+        name.startswith("synthetic/") and name != "synthetic/torus"
+    )
     is_binary_tree = name == "synthetic/binary-tree"
     model = SkeletalEmbedding(
         initialization="legacy_coarsen" if is_binary_tree else "skeletal",
