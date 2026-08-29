@@ -2013,6 +2013,47 @@ class SkeletalEmbedding:
         centerline = self._project_centerline(original)
         fit_residual_pca(self, points, centerline)
 
+    def _coverage_intersections_for(self, candidate: Any, points: Array) -> list[dict[str, Any]]:
+        """Validate rib/backbone crossings against the local tangent plane."""
+        intersections: list[dict[str, Any]] = []
+        backbone_count = int(getattr(self, "backbone_element_count_", len(self.routes_)))
+        for element_id, spline in enumerate(self.routes_[:backbone_count]):
+            left = np.asarray(spline.samples, dtype=float)
+            right = np.asarray(candidate.spline.samples, dtype=float)
+            distances = np.linalg.norm(left[:, None, :] - right[None, :, :], axis=2)
+            base_index, rib_index = np.unravel_index(int(np.argmin(distances)), distances.shape)
+            distance = float(distances[base_index, rib_index])
+            if distance > 3.0 * max(float(self.local_scale_), 1e-8):
+                continue
+            base_tangent = np.asarray(spline.tangent(spline.t_values[base_index]), dtype=float)
+            rib_tangent = np.asarray(candidate.spline.tangent(candidate.spline.t_values[rib_index]), dtype=float)
+            if abs(float(base_tangent @ rib_tangent)) > 0.97:
+                continue
+            center = 0.5 * (left[base_index] + right[rib_index])
+            local = points[
+                np.linalg.norm(points - center, axis=1)
+                <= 4.0 * max(float(self.local_scale_), 1e-8)
+            ]
+            if len(local) < 5 or points.shape[1] < 2:
+                continue
+            _, singular_values, components = np.linalg.svd(
+                local - np.mean(local, axis=0), full_matrices=False
+            )
+            if len(singular_values) < 2 or singular_values[1] <= 1e-10:
+                continue
+            tangent_plane = components[:2].T
+            curve_plane = np.column_stack([base_tangent, rib_tangent])
+            curve_plane, _ = np.linalg.qr(curve_plane, mode="reduced")
+            mismatch = subspace_principal_angle(curve_plane, tangent_plane)
+            if mismatch <= np.deg2rad(45.0):
+                intersections.append({
+                    "element_ids": (element_id, backbone_count + len(self.rib_paths_)),
+                    "junction_type": "coverage",
+                    "point": center.copy(),
+                    "tangent_plane_mismatch": float(mismatch),
+                })
+        return intersections
+
     def _refine_coverage(self, original: Array, points: Array) -> None:
         """Iteratively add useful ribs after local residual reconstruction."""
         self.coverage_history_ = []
@@ -2073,6 +2114,7 @@ class SkeletalEmbedding:
             if not selected:
                 break
             for candidate in selected:
+                candidate_intersections = self._coverage_intersections_for(candidate, points)
                 self.routes_.append(candidate.spline)
                 self.route_chains_.append({
                     "nodes": [],
@@ -2112,11 +2154,7 @@ class SkeletalEmbedding:
                                 - self.backbone_graph_.nodes[int(nearest)]
                             )),
                         )
-                    self.coverage_intersections_.append({
-                        "element_ids": (self.backbone_element_count_, len(self.routes_)),
-                        "junction_type": "coverage",
-                        "seed_index": candidate.seed_index,
-                    })
+                    self.coverage_intersections_.extend(candidate_intersections)
             self._refit_after_ribs(original, points)
         self._initialize_skeleton_metadata()
 

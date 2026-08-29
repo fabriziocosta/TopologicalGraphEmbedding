@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from ._curves import _fit_curve
+from ._local_geometry import _tangent_inconsistency
 
 Array = np.ndarray
 
@@ -46,6 +48,68 @@ def _orthogonal_direction(tangent: Array, residuals: Array) -> Array:
         direction -= float(direction @ tangent) * tangent
         norm = float(np.linalg.norm(direction))
     return direction / max(norm, 1e-12)
+
+
+def _routing_edge_cost(model: Any, left: int, right: int) -> float:
+    """Use the same length/tangent/density terms as backbone routing."""
+    graph = model.routing_graph_
+    edge = graph.key(left, right)
+    reference = max(float(model.local_scale_), 1e-12)
+    length = float(graph.edges[edge]) / reference
+    tangent = _tangent_inconsistency(
+        model.local_tangents_[left], model.local_tangents_[right]
+    )
+    density = 1.0 / max(float(graph.edge_density.get(edge, 0.0)), 1e-6)
+    return max(
+        model.routing_length_weight * length
+        + model.routing_tangent_weight * tangent
+        + model.routing_density_weight * density,
+        1e-8,
+    )
+
+
+def _route_nodes(
+    model: Any,
+    start: int,
+    target: int,
+    *,
+    alignment: Array | None = None,
+) -> list[int]:
+    """Route a rib between anchors using the original observation graph."""
+    graph = getattr(model, "routing_graph_", None)
+    if graph is None or start == target:
+        return [int(start), int(target)] if start != target else [int(start)]
+    queue: list[tuple[float, int, tuple[int, ...]]] = [(0.0, int(start), (int(start),))]
+    best = {int(start): 0.0}
+    while queue:
+        cost, node, path = heapq.heappop(queue)
+        if node == target:
+            return list(path)
+        if cost > best.get(node, np.inf) + 1e-12:
+            continue
+        for neighbour in sorted(graph.adjacency[node]):
+            if neighbour in path:
+                continue
+            edge_cost = _routing_edge_cost(model, node, neighbour)
+            if alignment is not None:
+                displacement = graph.points[neighbour] - graph.points[node]
+                norm = float(np.linalg.norm(displacement))
+                if norm > 1e-12:
+                    edge_cost += 0.75 * (1.0 - abs(float(
+                        np.asarray(alignment) @ (displacement / norm)
+                    )))
+            candidate = cost + edge_cost
+            if candidate < best.get(neighbour, np.inf):
+                best[neighbour] = candidate
+                heapq.heappush(queue, (candidate, neighbour, path + (neighbour,)))
+    return [int(start), int(target)]
+
+
+def _nearest_graph_node(model: Any, point: Array) -> int:
+    graph = getattr(model, "routing_graph_", None)
+    if graph is None:
+        return 0
+    return int(np.argmin(np.sum((graph.points - point) ** 2, axis=1)))
 
 
 def propose_ribs(
@@ -100,21 +164,43 @@ def propose_ribs(
         # comparably populated.
         positive = support_indices[signed[np.searchsorted(local, support_indices)] >= 0]
         negative = support_indices[signed[np.searchsorted(local, support_indices)] < 0]
-        sides = [positive, negative]
-        side = max(sides, key=len)
-        if len(positive) and len(negative) and abs(len(positive) - len(negative)) <= max(2, len(support_indices) // 5):
+        balanced = bool(
+            len(positive)
+            and len(negative)
+            and abs(len(positive) - len(negative)) <= max(2, len(support_indices) // 5)
+        )
+        inferred_type = "transverse" if balanced else "parallel"
+        if candidate_type == "transverse":
+            # Transverse is the conservative default: use the two most
+            # separated residual sides even when finite sampling makes one
+            # side smaller than the other.
+            inferred_type = "transverse"
+        elif candidate_type == "parallel":
+            inferred_type = "parallel"
+        if inferred_type == "transverse":
+            positive_anchor = int(local[np.argmax(signed)])
+            negative_anchor = int(local[np.argmin(signed)])
+            start_node = _nearest_graph_node(model, points[positive_anchor])
+            end_node = _nearest_graph_node(model, points[negative_anchor])
+            nodes = _route_nodes(model, start_node, end_node, alignment=direction)
             side = support_indices
-        if len(side) < 5:
+        else:
+            side = positive if len(positive) >= len(negative) else negative
+            if len(side) < 5:
+                continue
+            longitudinal = (points[side] - center) @ tangent
+            ordered = side[np.argsort(longitudinal, kind="mergesort")]
+            start_node = _nearest_graph_node(model, points[ordered[0]])
+            end_node = _nearest_graph_node(model, points[ordered[-1]])
+            nodes = _route_nodes(model, start_node, end_node, alignment=tangent)
+        if len(nodes) < 2:
             continue
-        longitudinal = (points[side] - center) @ tangent
-        side = side[np.argsort(longitudinal, kind="mergesort")]
-        support = points[side]
-        # Include a centerline-adjacent anchor so the provisional curve can
-        # be connected to the existing skeleton at its seed region.
-        if np.linalg.norm(support[0] - center) > 1.5 * model.local_scale_:
-            support = np.vstack([center, support])
-        if np.linalg.norm(support[-1] - center) > 1.5 * model.local_scale_:
-            support = np.vstack([support, center])
+        graph = getattr(model, "routing_graph_", None)
+        if graph is None:
+            support = points[side]
+            support = support[np.argsort((support - center) @ tangent, kind="mergesort")]
+        else:
+            support = graph.points[np.asarray(nodes, dtype=int)]
         support_scaled = np.asarray(support, dtype=float)
         spline = _fit_curve(
             support_scaled,
@@ -128,9 +214,6 @@ def propose_ribs(
             local_error - np.asarray(distances2[local], dtype=float), 0.0
         )
         gain = float(np.sum(local_gain))
-        inferred_type = "transverse" if len(positive) and len(negative) else "parallel"
-        if candidate_type != "both" and inferred_type != candidate_type:
-            continue
         proposals.append(
             RibCandidate(
                 points=support_scaled,
