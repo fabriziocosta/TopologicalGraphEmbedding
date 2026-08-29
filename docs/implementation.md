@@ -169,6 +169,9 @@ The main topology diagnostics are:
 | `electrical_traffic_` | Optional normalized aggregate current support |
 | `routing_components_` / `component_cycle_counts_` | Natural routing components and their cycle counts |
 | `candidate_paths_` | Constrained routes considered by the selector |
+| `persistent_cycles_` / `cycle_support_` | Persistent bars, approximate representatives, and subsampling support |
+| `junction_support_` / `endpoint_support_` / `route_support_` | Consensus support for fitted structural elements |
+| `rib_support_` / `stable_rib_mask_` | Coverage-rib reproducibility diagnostics |
 
 ## 5. Route fitting and projection
 
@@ -319,7 +322,7 @@ classifier.fit(X_train, y_train)
 predictions = classifier.predict(X_test)
 ```
 
-The transformer emits route indicators, position, residual norm, and either
+The transformer emits skeleton-element indicators (`skeleton_element_<id>`), position, residual norm, and either
 the legacy scaled residual components or learned `residual_pca_*` components
 when enabled. The classifier delegates to a cloned downstream estimator using
 route/position features and either learned residual-PCA coordinates or the
@@ -365,6 +368,14 @@ driven.
 `coverage_history_`, `coverage_iterations_`, `rib_paths_`, `rib_support_`,
 `element_types_`, `reconstruction_`, and `post_pca_residual_norm_` expose the
 refinement decisions and final approximation quality.
+
+When `stability_selection=True`, probes are sampled without replacement and
+matched to the full-data fit by persistence, landmark position, route corridor,
+and local branch geometry. Probe fits are never averaged. Consensus support is
+recorded in the `*_support_` fields, optional residual-subspace agreement is
+stored in `residual_subspace_stability_`, and the final decomposition records
+`geometry_fit_n_samples_` and `geometry_fit_indices_` to make full-data
+refitting explicit.
 
 ## 12. Reproducibility and limitations
 

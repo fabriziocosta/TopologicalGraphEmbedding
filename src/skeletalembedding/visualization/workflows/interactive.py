@@ -306,6 +306,15 @@ def display_interactive_viewer(
         value="greedy", description="rib selection", style=style,
         layout=control_width,
     )
+    rib_candidate_type_selector = widgets.Dropdown(
+        options=[
+            ("transverse", "transverse"),
+            ("parallel", "parallel"),
+            ("both", "both"),
+        ],
+        value="transverse", description="rib candidate type", style=style,
+        layout=control_width,
+    )
     coverage_gain_slider = widgets.FloatSlider(
         value=0.0, min=0.0, max=1.0, step=0.01,
         readout_format=".2f", description="minimum rib gain",
@@ -478,6 +487,7 @@ def display_interactive_viewer(
             coverage_iterations_slider.value,
             coverage_ribs_slider.value,
             coverage_selection_selector.value,
+            rib_candidate_type_selector.value,
             coverage_gain_slider.value,
             coverage_candidates_slider.value,
             coverage_length_penalty_slider.value,
@@ -564,6 +574,7 @@ def display_interactive_viewer(
             coverage_max_iterations=coverage_iterations_slider.value,
             coverage_max_ribs=coverage_max_ribs,
             coverage_selection=coverage_selection_selector.value,
+            rib_candidate_type=rib_candidate_type_selector.value,
             coverage_min_gain=coverage_gain_slider.value,
             coverage_max_candidates_per_iteration=coverage_candidates_slider.value,
             coverage_length_penalty=coverage_length_penalty_slider.value,
@@ -715,6 +726,7 @@ def display_interactive_viewer(
                     coverage_iterations_slider,
                     coverage_ribs_slider,
                     coverage_selection_selector,
+                    rib_candidate_type_selector,
                     coverage_gain_slider,
                     coverage_candidates_slider,
                     coverage_length_penalty_slider,

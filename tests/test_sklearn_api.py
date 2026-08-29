@@ -25,7 +25,7 @@ def test_transformer_clone_feature_names_and_typed_result():
     assert transformed.shape[0] == len(points)
     assert transformed.shape[1] == len(estimator.get_feature_names_out())
     assert result.route_id.shape == (len(points),)
-    assert estimator.get_feature_names_out()[0].startswith("route_")
+    assert estimator.get_feature_names_out()[0].startswith("skeleton_element_")
 
 
 def test_classifier_delegates_to_estimator_and_uses_estimator_parameter():

@@ -264,7 +264,8 @@ The most important estimator parameters are:
 | `coverage_error_tolerance` / `coverage_quantile` | Post-PCA coverage stopping criterion |
 | `coverage_max_iterations` / `coverage_max_ribs` | Limits on adaptive refinement |
 | `coverage_selection` | `greedy` or `mip` rib selection |
-| `stability_selection` / `stability_runs` | Optional subsampling-based structural support |
+| `rib_candidate_type` | `transverse`, `parallel`, or `both` candidate generation |
+| `stability_selection` / `stability_runs` | Optional matched subsampling-based structural support |
 
 There are two different notions of scale in the project:
 

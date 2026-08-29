@@ -75,3 +75,12 @@ def test_empty_and_invalid_inputs_are_rejected():
 def test_removed_root_modules_are_not_available():
     for module_name in ("topological_spline_graph", "spline_sklearn", "metro_layout", "synthetic_datasets"):
         assert importlib.util.find_spec(module_name) is None
+
+
+def test_hard_rename_has_one_public_estimator():
+    import skeletalembedding
+
+    assert skeletalembedding.SkeletalEmbedding is SkeletalEmbedding
+    assert not hasattr(skeletalembedding, "GraphBundleEmbedding")
+    assert not hasattr(skeletalembedding, "SplineGraphEmbedding")
+    assert importlib.util.find_spec("topological_graph_embedding") is None

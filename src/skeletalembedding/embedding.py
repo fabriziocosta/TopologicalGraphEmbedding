@@ -2160,6 +2160,9 @@ class SkeletalEmbedding:
 
     def _fit_final_diagnostics(self, original: Array, points: Array) -> None:
         """Cache the final decomposition in estimator-level fitted fields."""
+        self.geometry_fit_n_samples_ = len(original)
+        self.geometry_fit_indices_ = np.arange(len(original), dtype=int)
+        self.full_data_refit_ = True
         centerline = self._project_centerline(original)
         result = attach_residual_pca(self, original, points, centerline)
         self.centerline_residual_ = np.asarray(result.residual, dtype=float)
@@ -2197,8 +2200,14 @@ class SkeletalEmbedding:
         self.route_consensus_ = []
         self.rib_support_ = list(getattr(self, "rib_support_", []))
         self.rib_stability_ = list(getattr(self, "rib_stability_", []))
+        self.residual_subspace_stability_ = None
         self.stability_residual_subspaces_ = None
         if not self.stability_selection:
+            self.stable_cycle_mask_ = np.ones(len(self.persistent_cycles_), dtype=bool)
+            self.stable_junction_mask_ = np.ones(junction_count, dtype=bool)
+            self.stable_endpoint_mask_ = np.ones(endpoint_count, dtype=bool)
+            self.stable_route_mask_ = np.ones(len(self.routes_), dtype=bool)
+            self.stable_rib_mask_ = np.ones(len(self.rib_paths_), dtype=bool)
             self.stability_summary_ = {
                 "enabled": False,
                 "runs": 0,
@@ -2228,7 +2237,7 @@ class SkeletalEmbedding:
             self.stability_runs,
             self.rib_stability_runs if reference_ribs else self.stability_runs,
         ))
-        tolerance = 4.0 * max(float(self.local_scale_), 1e-8)
+        tolerance = 8.0 * max(float(self.local_scale_), 1e-8)
 
         for run in range(run_count):
             indices = subsample_indices(len(original), self.stability_fraction, self.random_state + run + 1)
@@ -2371,6 +2380,11 @@ class SkeletalEmbedding:
         self.route_support_ = route_hits / denominator
         self.rib_support_ = (rib_hits / denominator).tolist()
         self.rib_stability_ = list(self.rib_support_)
+        self.stable_cycle_mask_ = self.cycle_support_ >= self.stability_min_support
+        self.stable_junction_mask_ = self.junction_support_ >= self.stability_min_support
+        self.stable_endpoint_mask_ = self.endpoint_support_ >= self.stability_min_support
+        self.stable_route_mask_ = self.route_support_ >= self.stability_min_support
+        self.stable_rib_mask_ = np.asarray(self.rib_support_) >= self.rib_min_support
         for cycle, support in zip(self.persistent_cycles_, self.cycle_support_):
             cycle.stability_support = float(support)
         self.consensus_cycle_count_ = int(np.sum(self.cycle_support_ >= self.stability_min_support))
@@ -2405,6 +2419,7 @@ class SkeletalEmbedding:
             }
         else:
             self.residual_subspace_stability_ = None
+        self.stability_residual_subspaces_ = self.residual_subspace_stability_
         self.stability_summary_ = {
             "enabled": True,
             "runs": run_count,

@@ -75,3 +75,38 @@ def test_sklearn_adapter_exposes_new_parameters():
     assert cloned.get_params()["coverage_refinement"] is True
     transformed = transformer.fit(_plane(seed=5)).transform(_plane(seed=5))
     assert transformed.shape[0] == 160
+
+
+def test_rib_candidate_type_is_validated_and_cloneable():
+    estimator = SkeletalEmbedding(rib_candidate_type="parallel")
+    assert clone(estimator).get_params()["rib_candidate_type"] == "parallel"
+    for value in ("diagonal", "", None):
+        try:
+            SkeletalEmbedding(rib_candidate_type=value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid rib candidate type was accepted")
+
+
+def test_stability_consensus_is_reproducible_and_refits_all_observations():
+    points = _plane(seed=11)
+    kwargs = {
+        "n_centroids": 8,
+        "n_neighbors": 5,
+        "max_residual_dim": 1,
+        "stability_selection": True,
+        "stability_runs": 2,
+        "stability_fraction": 0.7,
+        "stability_residual_subspaces": True,
+        "random_state": 4,
+    }
+    first = SkeletalEmbedding(**kwargs).fit(points)
+    second = SkeletalEmbedding(**kwargs).fit(points)
+    np.testing.assert_allclose(first.route_support_, second.route_support_)
+    np.testing.assert_allclose(first.junction_support_, second.junction_support_)
+    assert first.geometry_fit_n_samples_ == len(points)
+    assert first.geometry_fit_indices_.tolist() == list(range(len(points)))
+    assert first.full_data_refit_ is True
+    assert first.stability_residual_subspaces_ is not None
+    assert first.stability_summary_["successful_runs"] == 2
