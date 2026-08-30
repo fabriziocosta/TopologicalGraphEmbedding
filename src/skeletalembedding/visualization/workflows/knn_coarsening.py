@@ -6,9 +6,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
-from matplotlib.colors import Normalize
 from scipy.sparse import coo_matrix
 from sklearn.cluster import KMeans
 from sklearn.neighbors import kneighbors_graph
@@ -213,52 +211,14 @@ def get_spline_embedding(
     return spline_model_cache[key]
 
 
-def _routing_metric(model, metric):
-    if metric == 'effective resistance':
-        return getattr(model, 'effective_resistance_', {}), 'effective resistance'
-    if metric == 'edge leverage':
-        return getattr(model, 'edge_leverage_', {}), 'edge leverage'
-    if metric == 'aggregate current':
-        return getattr(model, 'electrical_traffic_', {}), 'aggregate current'
-    return {}, 'routing substrate'
-
-
 def _plot_spline_pipeline(axis, points, model, electrical_metric):
-    """Draw substrate, simplified backbone, support paths, and splines."""
-    routing_graph = getattr(model, 'routing_graph_', None)
-    metric_values, metric_label = _routing_metric(model, electrical_metric)
-    if routing_graph is not None and routing_graph.edges:
-        edges = list(routing_graph.edges)
-        segments = np.asarray([
-            [routing_graph.points[left], routing_graph.points[right]]
-            for left, right in edges
-        ])
-        if metric_values:
-            values = np.asarray([metric_values.get(edge, 0.0) for edge in edges], dtype=float)
-            finite = np.isfinite(values)
-            safe_values = np.where(finite, values, 0.0)
-            low = float(np.min(safe_values))
-            high = float(np.max(safe_values))
-            if high <= low + 1e-12:
-                scaled = np.zeros_like(safe_values)
-                norm = Normalize(vmin=low, vmax=low + 1.0)
-            else:
-                scaled = (safe_values - low) / (high - low)
-                norm = Normalize(vmin=low, vmax=high)
-            cmap = plt.get_cmap('magma')
-            collection = LineCollection(
-                segments, colors=cmap(norm(safe_values)),
-                linewidths=0.35 + 1.8 * scaled, alpha=0.42, zorder=1,
-            )
-            axis.add_collection(collection)
-            scalar = ScalarMappable(norm=norm, cmap=cmap)
-            scalar.set_array(safe_values)
-            axis.figure.colorbar(scalar, ax=axis, fraction=0.046, pad=0.04, label=metric_label)
-        else:
-            axis.add_collection(LineCollection(
-                segments, colors='#a7adb3', linewidths=0.45, alpha=0.30, zorder=1,
-            ))
+    """Draw the point cloud and the final backbone graph only.
 
+    Route supports and fitted splines are intentionally omitted here.  The
+    node-resolution slider should be visually verifiable as graph edges
+    between the final backbone nodes, rather than being obscured by the dense
+    observation-level support geometry.
+    """
     landmark_graph = getattr(model, 'landmark_graph_', None)
     if landmark_graph is not None and landmark_graph.edges:
         backbone_segments = np.asarray([
@@ -266,27 +226,9 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
             for left, right in landmark_graph.edges
         ])
         axis.add_collection(LineCollection(
-            backbone_segments, colors='black', linewidths=4.0,
-            alpha=0.80, zorder=3,
+            backbone_segments, colors='black', linewidths=2.5,
+            alpha=0.88, zorder=3,
         ))
-
-    route_colors = plt.get_cmap('tab10', max(1, len(model.splines_)))
-    for route_id, (chain, spline) in enumerate(zip(model.route_chains_, model.splines_)):
-        color = route_colors(route_id)
-        support = np.asarray(chain.get('points', []), dtype=float)
-        if len(support) >= 2:
-            axis.plot(
-                support[:, 0], support[:, 1], color=color, linewidth=0.9,
-                linestyle=':', alpha=0.58, zorder=4,
-            )
-        samples = np.asarray(spline.samples, dtype=float)
-        if chain.get('closed') and len(samples):
-            samples = np.vstack([samples, samples[0]])
-        if len(samples):
-            axis.plot(
-                samples[:, 0], samples[:, 1], color=color, linewidth=2.7,
-                alpha=0.95, zorder=5,
-            )
 
     backbone_nodes = getattr(model, 'backbone_graph_', None)
     if backbone_nodes is not None and backbone_nodes.nodes:
@@ -315,9 +257,7 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
         )
 
     axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=1.0, zorder=0)
-    axis.plot([], [], color='black', linewidth=4.0, label='simplified backbone')
-    axis.plot([], [], color='#4c78a8', linewidth=2.7, label='fitted spline')
-    axis.plot([], [], color='#4c78a8', linewidth=0.9, linestyle=':', label='dense support path')
+    axis.plot([], [], color='black', linewidth=2.5, label='backbone edges')
     axis.legend(loc='best', fontsize=7, frameon=False)
     axis.text(
         0.02, 0.98,
