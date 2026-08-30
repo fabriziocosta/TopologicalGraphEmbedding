@@ -80,6 +80,11 @@ class CandidatePath:
     branch_end: int | None = None
     persistent_cycle_classes: tuple[int, ...] = ()
     stability_support: float = 1.0
+    # Optional geometric support used by post-selection backbone
+    # subdivision/contraction.  The ordinary topology selector uses
+    # ``vertices``; resized edges may contain interpolated nodes that are not
+    # vertices of the dense routing graph.
+    support_points: Array | None = None
 
 
 class _WeightedKNNGraph:

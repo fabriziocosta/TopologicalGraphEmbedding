@@ -15,6 +15,11 @@ The implementation uses four related graph objects:
   `n_centroids` landmarks. It is the main graph used for route selection.
 - The backbone graph is the selected abstract graph after topology and
   connectivity constraints have been applied.
+- In skeletal initialization, optional node-resolution controls are applied
+  after topology selection. `n_backbone_nodes` targets an exact graph-node
+  count by subdividing or contracting degree-two edges, while
+  `backbone_node_spacing` subdivides long edges to a maximum fitted-space
+  length. Neither control reruns the topology selector.
 - A route chain is a maximal degree-2 path in the backbone graph. Each chain
   is fitted as one open or closed curve and becomes a public route.
 - The skeleton graph is the backbone graph plus typed rib edges. Each fitted
@@ -101,6 +106,25 @@ dense `(n, k, d)` tensor. A block of `b` observations and `m` landmarks uses
 memory proportional to the block rather than to the full observation set.
 
 ## 4. Local geometry and topology selection
+
+### 4.1 Final backbone resolution
+
+The topology-aware selector first chooses the junctions, endpoints, cycle
+anchors, and their connecting routes. Resolution is then adjusted on the
+selected graph. Increasing `n_backbone_nodes` inserts evenly spaced support
+nodes along the selected route geometry; decreasing it contracts degree-two
+nodes. Junctions and endpoints are not contracted, and the default
+`backbone_node_policy="topology_preserving"` refuses contractions that would
+lower cycle rank or collapse a simple-graph cycle. Use
+`backbone_node_policy="allow_topology_relaxation"` when that trade-off is
+intentional.
+
+`n_backbone_nodes` and `backbone_node_spacing` are mutually exclusive. The
+former is an exact target and raises an error when the target is below the
+minimum representation of the selected topology. The latter is a geometric
+resolution control and adds as many degree-two nodes as needed. Interpolated
+nodes retain explicit support polylines, so route fitting and projection keep
+the dense selected geometry rather than falling back to straight chords.
 
 Persistent homology provides a cycle target. Ripser is used when available;
 otherwise the implementation uses a capped NumPy Vietoris–Rips H1 fallback.

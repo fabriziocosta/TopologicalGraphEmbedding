@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 from sklearn.base import clone
 
 from skeletalembedding import SkeletalEmbedding
+from skeletalembedding.datasets import generate_synthetic_datasets
 from skeletalembedding.sklearn import SkeletalEmbeddingTransformer
 
 
@@ -15,6 +17,81 @@ def test_skeletal_api_and_legacy_initializer():
     estimator = SkeletalEmbedding(n_neighbors=6, initialization="skeletal")
     assert clone(estimator).get_params()["initialization"] == "skeletal"
     assert SkeletalEmbedding(initialization="legacy_coarsen").initialization == "legacy_coarsen"
+
+
+def test_skeletal_backbone_node_target_subdivides_edges_and_preserves_topology():
+    points = np.column_stack((np.linspace(-2.0, 2.0, 120), np.zeros(120)))
+    model = SkeletalEmbedding(
+        n_centroids=12,
+        n_backbone_nodes=9,
+        initialization="skeletal",
+        random_state=3,
+    ).fit(points)
+
+    assert model.backbone_node_count_ == 9
+    assert len(model.backbone_graph_.nodes) == 9
+    assert model.backbone_graph_.cycle_rank() == 0
+    assert model.backbone_graph_.degree(model.endpoint_node_ids_[0]) == 1
+    assert model.backbone_graph_.degree(model.endpoint_node_ids_[1]) == 1
+    assert np.all(model.transform(points).route_id >= 0)
+
+
+def test_skeletal_backbone_spacing_subdivides_long_edges():
+    points = np.column_stack((np.linspace(-2.0, 2.0, 120), np.zeros(120)))
+    model = SkeletalEmbedding(
+        n_centroids=12,
+        backbone_node_spacing=0.5,
+        initialization="skeletal",
+        random_state=3,
+    ).fit(points)
+
+    assert len(model.backbone_graph_.nodes) > 2
+    assert max(model.backbone_graph_.edges.values()) <= 0.5 + 1e-10
+
+
+def test_skeletal_backbone_node_target_enforces_topological_lower_bound():
+    points = generate_synthetic_datasets(n=180, noise=0.02, random_state=1)["circle"]
+    with pytest.raises(ValueError, match="minimum|could not be realized"):
+        SkeletalEmbedding(
+            n_centroids=20,
+            n_backbone_nodes=2,
+            initialization="skeletal",
+            random_state=0,
+        ).fit(points)
+
+    relaxed = SkeletalEmbedding(
+        n_centroids=20,
+        n_backbone_nodes=2,
+        backbone_node_policy="allow_topology_relaxation",
+        initialization="skeletal",
+        random_state=0,
+    ).fit(points)
+    assert len(relaxed.backbone_graph_.nodes) == 2
+    assert relaxed.backbone_graph_.cycle_rank() == 0
+
+
+def test_skeletal_backbone_node_target_preserves_cycle_rank_when_refining_cycle():
+    points = generate_synthetic_datasets(n=180, noise=0.02, random_state=1)["circle"]
+    model = SkeletalEmbedding(
+        n_centroids=20,
+        n_backbone_nodes=8,
+        initialization="skeletal",
+        random_state=0,
+    ).fit(points)
+
+    assert len(model.backbone_graph_.nodes) == 8
+    assert model.backbone_graph_.cycle_rank() == 1
+    assert np.all(model.transform(points).route_id >= 0)
+
+
+def test_backbone_resolution_controls_are_validated_for_skeletal_mode():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        SkeletalEmbedding(n_backbone_nodes=8, backbone_node_spacing=0.5)
+    with pytest.raises(ValueError, match="require initialization='skeletal'"):
+        SkeletalEmbedding(
+            initialization="legacy_coarsen",
+            n_backbone_nodes=8,
+        )
 
 
 def test_skeleton_metadata_and_reconstruction_diagnostics():
@@ -67,12 +144,14 @@ def test_sklearn_adapter_exposes_new_parameters():
     transformer = SkeletalEmbeddingTransformer(
         initialization="skeletal",
         n_neighbors=6,
+        n_backbone_nodes=8,
         coverage_refinement=True,
         coverage_error_tolerance=0.1,
         max_residual_dim=1,
     )
     cloned = clone(transformer)
     assert cloned.get_params()["coverage_refinement"] is True
+    assert cloned.get_params()["n_backbone_nodes"] == 8
     transformed = transformer.fit(_plane(seed=5)).transform(_plane(seed=5))
     assert transformed.shape[0] == 160
 

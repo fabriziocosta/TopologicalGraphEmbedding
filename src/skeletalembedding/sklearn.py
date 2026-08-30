@@ -22,6 +22,9 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
     def __init__(
         self,
         n_centroids: int = 32,
+        n_backbone_nodes: int | None = None,
+        backbone_node_spacing: float | None = None,
+        backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
         initialization: str = "skeletal",
         persistence_threshold: float | None = None,
@@ -86,6 +89,9 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         n_jobs: int | None = None,
     ) -> None:
         self.n_centroids = n_centroids
+        self.n_backbone_nodes = n_backbone_nodes
+        self.backbone_node_spacing = backbone_node_spacing
+        self.backbone_node_policy = backbone_node_policy
         self.n_neighbors = n_neighbors
         self.initialization = initialization
         self.persistence_threshold = persistence_threshold
@@ -152,6 +158,9 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
     def _new_embedding(self) -> SkeletalEmbedding:
         return SkeletalEmbedding(
             n_centroids=self.n_centroids,
+            n_backbone_nodes=self.n_backbone_nodes,
+            backbone_node_spacing=self.backbone_node_spacing,
+            backbone_node_policy=self.backbone_node_policy,
             n_neighbors=self.n_neighbors,
             initialization=self.initialization,
             persistence_threshold=self.persistence_threshold,
@@ -295,6 +304,9 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
         self,
         estimator: Any | None = None,
         n_centroids: int = 32,
+        n_backbone_nodes: int | None = None,
+        backbone_node_spacing: float | None = None,
+        backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
         initialization: str = "skeletal",
         persistence_threshold: float | None = None,
@@ -360,6 +372,9 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
     ) -> None:
         super().__init__(
             n_centroids=n_centroids,
+            n_backbone_nodes=n_backbone_nodes,
+            backbone_node_spacing=backbone_node_spacing,
+            backbone_node_policy=backbone_node_policy,
             n_neighbors=n_neighbors,
             initialization=initialization,
             persistence_threshold=persistence_threshold,

@@ -110,6 +110,9 @@ class SkeletalEmbedding:
     def __init__(
         self,
         n_centroids: int = 32,
+        n_backbone_nodes: int | None = None,
+        backbone_node_spacing: float | None = None,
+        backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
         initialization: str = "skeletal",
         persistence_threshold: float | None = None,
@@ -175,6 +178,28 @@ class SkeletalEmbedding:
     ) -> None:
         if n_centroids < 3:
             raise ValueError("n_centroids must be at least 3")
+        if n_backbone_nodes is not None and (
+            isinstance(n_backbone_nodes, bool)
+            or not isinstance(n_backbone_nodes, (int, np.integer))
+            or n_backbone_nodes < 1
+        ):
+            raise ValueError("n_backbone_nodes must be a positive integer or None")
+        if backbone_node_spacing is not None and (
+            backbone_node_spacing <= 0.0 or not np.isfinite(backbone_node_spacing)
+        ):
+            raise ValueError("backbone_node_spacing must be positive and finite or None")
+        if n_backbone_nodes is not None and backbone_node_spacing is not None:
+            raise ValueError(
+                "n_backbone_nodes and backbone_node_spacing are mutually exclusive"
+            )
+        if backbone_node_policy not in {
+            "topology_preserving",
+            "allow_topology_relaxation",
+        }:
+            raise ValueError(
+                "backbone_node_policy must be 'topology_preserving' or "
+                "'allow_topology_relaxation'"
+            )
         if max_cycles < 0:
             raise ValueError("max_cycles must be non-negative")
         if persistence_max_points < 1:
@@ -197,6 +222,12 @@ class SkeletalEmbedding:
             raise ValueError("residual_subspace_smoothness must be finite and non-negative")
         if initialization not in {"skeletal", "legacy_coarsen"}:
             raise ValueError("initialization must be 'skeletal' or 'legacy_coarsen'")
+        if initialization != "skeletal" and (
+            n_backbone_nodes is not None or backbone_node_spacing is not None
+        ):
+            raise ValueError(
+                "backbone node resolution controls require initialization='skeletal'"
+            )
         if spline_control_mode not in {"support", "backbone"}:
             raise ValueError("spline_control_mode must be 'support' or 'backbone'")
         if local_pca_neighbors < 2:
@@ -265,6 +296,13 @@ class SkeletalEmbedding:
         if rib_stability_runs is not None and rib_stability_runs < 1:
             raise ValueError("rib_stability_runs must be positive when provided")
         self.n_centroids = int(n_centroids)
+        self.n_backbone_nodes = (
+            None if n_backbone_nodes is None else int(n_backbone_nodes)
+        )
+        self.backbone_node_spacing = (
+            None if backbone_node_spacing is None else float(backbone_node_spacing)
+        )
+        self.backbone_node_policy = str(backbone_node_policy)
         self.n_neighbors = int(n_neighbors)
         self.initialization = str(initialization)
         self.persistence_threshold = persistence_threshold
@@ -427,6 +465,9 @@ class SkeletalEmbedding:
         self.hypercube_dimension_ = None
         if self.initialization == "skeletal":
             graph, backbone_paths = self._topological_backbone(points, self.centroids_)
+            graph, backbone_paths = self._resize_skeletal_backbone(
+                graph, backbone_paths, points
+            )
             self.backbone_paths_ = backbone_paths
             self.merge_junction_distance_ = 0.0
             representatives = _approximate_cycle_representatives(
@@ -1894,6 +1935,322 @@ class SkeletalEmbedding:
             )
         return graph, selected
 
+    @staticmethod
+    def _polyline_length(points: Array) -> float:
+        """Return the length of an ordered support polyline."""
+        points = np.asarray(points, dtype=float)
+        if len(points) < 2:
+            return 0.0
+        return float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
+
+    def _candidate_support_points(
+        self,
+        graph: _LandmarkGraph,
+        candidate: CandidatePath,
+        left: int,
+        right: int,
+        points: Array,
+    ) -> Array:
+        """Return a candidate path's support in ``left`` to ``right`` order."""
+        if candidate.support_points is not None:
+            support = np.asarray(candidate.support_points, dtype=float).copy()
+            if candidate.start_landmark != left:
+                support = support[::-1].copy()
+        else:
+            vertices = np.asarray(candidate.vertices, dtype=int)
+            support = np.asarray(points[vertices], dtype=float).copy()
+            if candidate.start_landmark != left:
+                support = support[::-1].copy()
+        if len(support) == 0:
+            support = np.asarray([graph.nodes[left], graph.nodes[right]], dtype=float)
+        elif len(support) == 1:
+            support = np.vstack((graph.nodes[left], graph.nodes[right]))
+        else:
+            support[0] = graph.nodes[left]
+            support[-1] = graph.nodes[right]
+        return support
+
+    @staticmethod
+    def _interpolate_polyline(points: Array, distance: float) -> Array:
+        """Interpolate one point at arclength ``distance`` on a polyline."""
+        points = np.asarray(points, dtype=float)
+        if len(points) == 0:
+            return np.empty(0, dtype=float)
+        if len(points) == 1:
+            return points[0].copy()
+        lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+        cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
+        distance = float(np.clip(distance, 0.0, cumulative[-1]))
+        segment = int(np.searchsorted(cumulative, distance, side="right") - 1)
+        segment = min(max(segment, 0), len(points) - 2)
+        span = cumulative[segment + 1] - cumulative[segment]
+        if span <= 1e-12:
+            return points[segment].copy()
+        fraction = (distance - cumulative[segment]) / span
+        return points[segment] + fraction * (points[segment + 1] - points[segment])
+
+    @classmethod
+    def _split_polyline(cls, points: Array, parts: int) -> list[Array]:
+        """Split a support polyline into equal-arclength pieces."""
+        points = np.asarray(points, dtype=float)
+        parts = max(1, int(parts))
+        if parts == 1:
+            return [points.copy()]
+        if len(points) < 2:
+            points = np.vstack((points, points)) if len(points) else np.zeros((2, 1))
+        lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+        cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
+        total = float(cumulative[-1])
+        boundaries = [
+            cls._interpolate_polyline(points, total * index / parts)
+            for index in range(parts + 1)
+        ]
+        result: list[Array] = []
+        for index in range(parts):
+            start_distance = total * index / parts
+            end_distance = total * (index + 1) / parts
+            interior = points[
+                (cumulative > start_distance + 1e-12)
+                & (cumulative < end_distance - 1e-12)
+            ]
+            piece = np.vstack((boundaries[index], interior, boundaries[index + 1]))
+            result.append(piece)
+        return result
+
+    @staticmethod
+    def _support_candidate(
+        left: int,
+        right: int,
+        support: Array,
+        template: CandidatePath,
+        total_cost: float | None = None,
+    ) -> CandidatePath:
+        """Create a resized candidate while retaining selection diagnostics."""
+        length = SkeletalEmbedding._polyline_length(support)
+        return CandidatePath(
+            start_landmark=int(left),
+            end_landmark=int(right),
+            vertices=list(template.vertices),
+            total_cost=float(length if total_cost is None else total_cost),
+            length=length,
+            tangent_cost=float(template.tangent_cost),
+            electrical_support=float(template.electrical_support),
+            current_support=float(template.current_support),
+            persistent_cycle_classes=tuple(template.persistent_cycle_classes),
+            stability_support=float(template.stability_support),
+            support_points=np.asarray(support, dtype=float).copy(),
+        )
+
+    def _contract_backbone_node(
+        self,
+        graph: _LandmarkGraph,
+        paths: dict[tuple[int, int], CandidatePath],
+        node: int,
+        points: Array,
+        preserve_topology: bool,
+    ) -> bool:
+        """Contract one degree-two node and merge its support paths."""
+        neighbours = graph.neighbors(node)
+        if len(neighbours) != 2 or neighbours[0] == neighbours[1]:
+            return False
+        left, right = neighbours
+        merged_edge = graph._key(left, right)
+        if preserve_topology and merged_edge in graph.edges:
+            # Removing this node would collapse two parallel cycle sides into
+            # one simple-graph edge and therefore lower the cycle rank.
+            return False
+        first_edge = graph._key(left, node)
+        second_edge = graph._key(node, right)
+        first = paths.get(first_edge)
+        second = paths.get(second_edge)
+        if first is None or second is None:
+            return False
+        first_support = self._candidate_support_points(
+            graph, first, left, node, points
+        )
+        second_support = self._candidate_support_points(
+            graph, second, node, right, points
+        )
+        merged_support = np.vstack((first_support, second_support[1:]))
+        graph.remove_node(node)
+        paths.pop(first_edge, None)
+        paths.pop(second_edge, None)
+        if merged_edge not in graph.edges:
+            graph.add_edge(left, right, self._polyline_length(merged_support))
+            paths[merged_edge] = self._support_candidate(
+                left, right, merged_support, first,
+                total_cost=first.total_cost + second.total_cost,
+            )
+        return True
+
+    def _resize_skeletal_backbone(
+        self,
+        graph: _LandmarkGraph,
+        backbone_paths: dict[tuple[int, int], CandidatePath],
+        points: Array,
+    ) -> tuple[_LandmarkGraph, dict[tuple[int, int], CandidatePath]]:
+        """Resize the selected skeletal graph without rerunning topology selection."""
+        target = self.n_backbone_nodes
+        spacing = self.backbone_node_spacing
+        if target is None and spacing is None:
+            self.backbone_node_count_ = len(graph.nodes)
+            self.backbone_node_target_ = None
+            self.backbone_node_spacing_ = None
+            self.backbone_node_minimum_ = len(graph.nodes)
+            self.backbone_node_vertex_ids_ = {
+                int(node): int(vertex)
+                for node, vertex in enumerate(getattr(self, "landmark_vertex_ids_", []))
+                if node in graph.nodes
+            }
+            return graph, backbone_paths
+
+        graph = graph.copy()
+        paths = dict(backbone_paths)
+        original_vertex_ids = np.asarray(
+            getattr(self, "landmark_vertex_ids_", np.full(len(graph.nodes), -1)),
+            dtype=int,
+        )
+        node_vertex_ids = {
+            int(node): int(original_vertex_ids[node])
+            for node in graph.nodes
+            if node < len(original_vertex_ids)
+        }
+
+        # First contract degree-two nodes when an exact target is smaller than
+        # the selected graph.  Junctions and endpoints are never contracted.
+        if target is not None and target < len(graph.nodes):
+            preserve_topology = self.backbone_node_policy == "topology_preserving"
+            while len(graph.nodes) > target:
+                candidates = []
+                for node in graph.nodes:
+                    if graph.degree(node) != 2:
+                        continue
+                    neighbours = graph.neighbors(node)
+                    if len(neighbours) != 2 or neighbours[0] == neighbours[1]:
+                        continue
+                    edge = graph._key(neighbours[0], node)
+                    other = graph._key(node, neighbours[1])
+                    first = paths.get(edge)
+                    second = paths.get(other)
+                    if first is None or second is None:
+                        continue
+                    support = self._candidate_support_points(
+                        graph, first, neighbours[0], node, points
+                    )
+                    support = np.vstack((
+                        support,
+                        self._candidate_support_points(
+                            graph, second, node, neighbours[1], points
+                        )[1:],
+                    ))
+                    if preserve_topology and graph._key(*neighbours) in graph.edges:
+                        continue
+                    candidates.append((self._polyline_length(support), int(node)))
+                if not candidates:
+                    break
+                _, node = min(candidates)
+                neighbours = graph.neighbors(node)
+                if not self._contract_backbone_node(
+                    graph, paths, node, points, preserve_topology
+                ):
+                    break
+                node_vertex_ids.pop(node, None)
+
+            if len(graph.nodes) < target:
+                minimum = len(graph.nodes)
+                self.backbone_node_minimum_ = minimum
+                raise ValueError(
+                    f"n_backbone_nodes={target} cannot be reached while preserving "
+                    f"the selected backbone; the minimum is {minimum}"
+                )
+
+        if target is not None and target > len(graph.nodes):
+            if not graph.edges:
+                raise ValueError(
+                    "n_backbone_nodes cannot exceed the selected backbone node count "
+                    "when the backbone has no edges"
+                )
+            parts = {edge: 1 for edge in graph.edges}
+            supports = {
+                edge: self._candidate_support_points(
+                    graph, paths[edge], edge[0], edge[1], points
+                )
+                for edge in graph.edges
+            }
+            lengths = {edge: self._polyline_length(support) for edge, support in supports.items()}
+            while len(graph.nodes) + sum(parts.values()) - len(parts) < target:
+                edge = max(
+                    parts,
+                    key=lambda item: (
+                        lengths[item] / parts[item],
+                        lengths[item],
+                        tuple(-value for value in item),
+                    ),
+                )
+                parts[edge] += 1
+            target_parts = parts
+        elif spacing is not None:
+            target_parts = {}
+            for edge in graph.edges:
+                support = self._candidate_support_points(
+                    graph, paths[edge], edge[0], edge[1], points
+                )
+                target_parts[edge] = max(
+                    1, int(np.ceil(self._polyline_length(support) / spacing))
+                )
+        else:
+            target_parts = {edge: 1 for edge in graph.edges}
+
+        if any(parts > 1 for parts in target_parts.values()):
+            resized = _LandmarkGraph(graph.nodes)
+            next_node = max(graph.nodes, default=-1) + 1
+            resized_paths: dict[tuple[int, int], CandidatePath] = {}
+            for edge, old_candidate in paths.items():
+                if edge not in target_parts:
+                    continue
+                left, right = edge
+                support = self._candidate_support_points(
+                    graph, old_candidate, left, right, points
+                )
+                pieces = self._split_polyline(support, target_parts[edge])
+                boundary_nodes = [left]
+                for piece in pieces[:-1]:
+                    node = next_node
+                    next_node += 1
+                    boundary_nodes.append(node)
+                    resized.nodes[node] = piece[-1].copy()
+                    node_vertex_ids[node] = int(
+                        np.argmin(np.sum((points - piece[-1]) ** 2, axis=1))
+                    )
+                boundary_nodes.append(right)
+                total_length = max(self._polyline_length(support), 1e-12)
+                for index, piece in enumerate(pieces):
+                    subedge = resized._key(boundary_nodes[index], boundary_nodes[index + 1])
+                    piece_length = self._polyline_length(piece)
+                    resized.add_edge(boundary_nodes[index], boundary_nodes[index + 1], piece_length)
+                    resized_paths[subedge] = self._support_candidate(
+                        boundary_nodes[index],
+                        boundary_nodes[index + 1],
+                        piece,
+                        old_candidate,
+                        total_cost=old_candidate.total_cost * piece_length / total_length,
+                    )
+            graph = resized
+            paths = resized_paths
+
+        if target is not None and len(graph.nodes) != target:
+            self.backbone_node_minimum_ = len(graph.nodes)
+            raise ValueError(
+                f"n_backbone_nodes={target} could not be realized; "
+                f"the resulting backbone has {len(graph.nodes)} nodes"
+            )
+        self.backbone_node_count_ = len(graph.nodes)
+        self.backbone_node_target_ = target
+        self.backbone_node_spacing_ = spacing
+        self.backbone_node_minimum_ = len(graph.nodes)
+        self.backbone_node_vertex_ids_ = node_vertex_ids
+        return graph, paths
+
     def _tag_persistent_cycle_candidates(self, candidates: list[CandidatePath]) -> None:
         """Associate candidate routes with approximate persistent cycles."""
         cycles = [cycle for cycle in self.persistent_cycles_ if cycle.representative is not None]
@@ -1944,11 +2301,19 @@ class SkeletalEmbedding:
             candidate = self.backbone_paths_.get(self.landmark_graph_._key(left, right))
             if candidate is None:
                 continue
-            vertices = list(candidate.vertices)
-            forward = candidate.start_landmark == left
-            if not forward:
-                vertices.reverse()
-            support = np.asarray([self.routing_graph_.points[index] for index in vertices], dtype=float)
+            if candidate.support_points is not None:
+                support = np.asarray(candidate.support_points, dtype=float).copy()
+                if candidate.start_landmark != left:
+                    support = support[::-1].copy()
+            else:
+                vertices = list(candidate.vertices)
+                forward = candidate.start_landmark == left
+                if not forward:
+                    vertices.reverse()
+                support = np.asarray(
+                    [self.routing_graph_.points[index] for index in vertices],
+                    dtype=float,
+                )
             support[0] = self.landmark_graph_.nodes[left]
             support[-1] = self.landmark_graph_.nodes[right]
             if segments and np.allclose(segments[-1][-1], support[0]):
@@ -2016,10 +2381,14 @@ class SkeletalEmbedding:
         """
         if not nodes or not getattr(self, "routing_components_", None):
             return None
-        landmark_vertices = getattr(self, "landmark_vertex_ids_", None)
-        if landmark_vertices is None:
-            return None
-        vertex = int(landmark_vertices[nodes[0]])
+        node_vertices = getattr(self, "backbone_node_vertex_ids_", None)
+        if node_vertices is not None and nodes[0] in node_vertices:
+            vertex = int(node_vertices[nodes[0]])
+        else:
+            landmark_vertices = getattr(self, "landmark_vertex_ids_", None)
+            if landmark_vertices is None or nodes[0] >= len(landmark_vertices):
+                return None
+            vertex = int(landmark_vertices[nodes[0]])
         component_id = self.routing_component_by_vertex_.get(vertex)
         if component_id is None:
             return None
@@ -2073,9 +2442,15 @@ class SkeletalEmbedding:
         )
         if anchor_vertex is None:
             return chain["points"]
-        component_id = self.routing_component_by_vertex_.get(
-            int(anchor_vertex.vertices[0])
-        )
+        if anchor_vertex.vertices:
+            anchor_routing_vertex = int(anchor_vertex.vertices[0])
+        elif getattr(self, "backbone_node_vertex_ids_", None) is not None:
+            anchor_routing_vertex = int(
+                self.backbone_node_vertex_ids_.get(anchor, -1)
+            )
+        else:
+            return chain["points"]
+        component_id = self.routing_component_by_vertex_.get(anchor_routing_vertex)
         if component_id is None or component_id >= len(self.routing_components_):
             return chain["points"]
         component = self.routing_components_[component_id]
@@ -2469,6 +2844,9 @@ class SkeletalEmbedding:
             try:
                 probe = SkeletalEmbedding(
                     n_centroids=min(self.n_centroids, len(sample)),
+                    n_backbone_nodes=self.n_backbone_nodes,
+                    backbone_node_spacing=self.backbone_node_spacing,
+                    backbone_node_policy=self.backbone_node_policy,
                     n_neighbors=self.n_neighbors,
                     initialization=self.initialization,
                     persistence_threshold=self.persistence_threshold,

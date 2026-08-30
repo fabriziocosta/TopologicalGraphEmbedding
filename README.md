@@ -236,6 +236,9 @@ The most important estimator parameters are:
 | Parameter | Role |
 | --- | --- |
 | `n_centroids` | Resolution of the landmark graph; larger values preserve more detail but cost more |
+| `n_backbone_nodes` | Exact target for the final skeletal backbone node count; topology-preserving when set |
+| `backbone_node_spacing` | Optional maximum fitted-space edge length; subdivides the final backbone automatically |
+| `backbone_node_policy` | `topology_preserving` protects junctions, endpoints, and cycle rank; `allow_topology_relaxation` permits cycle loss when contracting |
 | `max_cycles` | Maximum number of cycles allowed in the fitted graph |
 | `persistence_threshold` | H1 significance threshold; topological mode interprets it in normalized nearest-neighbour units |
 | `topology_neighbors` | Number of local kNN neighbors considered for cycle candidates |
