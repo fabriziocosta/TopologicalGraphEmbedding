@@ -304,7 +304,9 @@ reducer = fit_reducer(X, method="umap", n_neighbors=15)
 UMAP's `n_neighbors` changes the visual layout's local/global emphasis only.
 It does not refit the topological graph. PCA and classical MDS are available
 as deterministic display alternatives. The high-dimensional notebook exposes the UMAP
-neighbor count and metro dispersion width through interactive sliders.
+neighbor count, metro dispersion width, and (for topology-aware initialization)
+the final backbone node count through interactive sliders. A value of zero
+leaves the backbone node count automatic.
 
 The shared four-panel renderer is available through
 `skeletalembedding.visualization.plot_embedding_row`. For direct

@@ -153,6 +153,11 @@ def display_interactive_viewer(
         description="centroids", continuous_update=False,
         style=style, layout=control_width,
     )
+    backbone_nodes_slider = widgets.IntSlider(
+        value=0, min=0, max=128, step=1,
+        description="backbone nodes (0=auto)", continuous_update=False,
+        style=style, layout=control_width,
+    )
     model_neighbors_slider = widgets.IntSlider(
         value=6, min=2, max=50, step=1,
         description="model kNN neighbors", continuous_update=False,
@@ -439,6 +444,9 @@ def display_interactive_viewer(
     def update_reducer_controls(*_: Any) -> None:
         umap_neighbors_slider.disabled = reducer_selector.value != "umap"
 
+    def update_backbone_controls(*_: Any) -> None:
+        backbone_nodes_slider.disabled = initialization_selector.value != "skeletal"
+
     def update_coverage_controls(*_: Any) -> None:
         coverage_tolerance_slider.disabled = coverage_mode.value == "auto"
 
@@ -461,6 +469,10 @@ def display_interactive_viewer(
         residual_dim_slider.max = max(0, min(8, points.shape[1] - 1))
         residual_dim_slider.value = min(
             residual_dim_slider.value, residual_dim_slider.max,
+        )
+        backbone_nodes_slider.max = max(2, min(128, len(points)))
+        backbone_nodes_slider.value = min(
+            backbone_nodes_slider.value, backbone_nodes_slider.max,
         )
 
     def render_selected_dataset(_=None) -> None:
@@ -502,6 +514,7 @@ def display_interactive_viewer(
             data_key,
             initialization_selector.value,
             centroid_slider.value,
+            backbone_nodes_slider.value,
             model_neighbors_slider.value,
             topology_neighbors_slider.value,
             mutual_knn_checkbox.value,
@@ -579,9 +592,16 @@ def display_interactive_viewer(
         coverage_max_ribs = (
             None if coverage_ribs_slider.value == 0 else coverage_ribs_slider.value
         )
+        n_backbone_nodes = (
+            None
+            if initialization_selector.value != "skeletal"
+            or backbone_nodes_slider.value == 0
+            else int(backbone_nodes_slider.value)
+        )
         model = SkeletalEmbedding(
             initialization=initialization_selector.value,
             n_centroids=centroid_slider.value,
+            n_backbone_nodes=n_backbone_nodes,
             n_neighbors=model_neighbors_slider.value,
             topology_neighbors=topology_neighbors_slider.value,
             mutual_knn=mutual_knn_checkbox.value,
@@ -711,6 +731,7 @@ def display_interactive_viewer(
             "mutual_knn": model.mutual_knn,
             "add_mst": model.add_mst,
             "cycles": model.realized_cycle_count_,
+            "backbone_nodes": len(model.backbone_graph_.nodes),
             "junctions": len(model.junctions_),
             "endpoints": len(model.endpoints_),
             "chains": len(model.splines_),
@@ -728,8 +749,10 @@ def display_interactive_viewer(
         last_render_key = render_key
 
     reducer_selector.observe(update_reducer_controls, names="value")
+    initialization_selector.observe(update_backbone_controls, names="value")
     coverage_mode.observe(update_coverage_controls, names="value")
     update_reducer_controls()
+    update_backbone_controls()
     update_coverage_controls()
     data_controls = [dataset_selector]
     if points_slider is not None:
@@ -745,6 +768,7 @@ def display_interactive_viewer(
                     "Graph fitting",
                     initialization_selector,
                     centroid_slider,
+                    backbone_nodes_slider,
                     model_neighbors_slider,
                     topology_neighbors_slider,
                     mutual_knn_checkbox,

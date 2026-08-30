@@ -141,7 +141,7 @@ def get_spline_embedding(
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
-    backbone_simplification,
+    backbone_simplification, n_backbone_nodes,
 ):
     """Fit and cache the downstream skeletal pipeline."""
     key = (
@@ -154,6 +154,7 @@ def get_spline_embedding(
         int(coverage_max_iterations), bool(stability_selection),
         int(stability_runs), float(stability_fraction),
         float(backbone_simplification),
+        None if n_backbone_nodes is None else int(n_backbone_nodes),
     )
     if key not in spline_model_cache:
         use_resistance = electrical_metric in {'effective resistance', 'edge leverage'}
@@ -162,6 +163,10 @@ def get_spline_embedding(
             initialization = 'legacy_coarsen' if dataset_name == 'binary-tree' else 'skeletal'
         model = SkeletalEmbedding(
             n_centroids=int(n_centroids),
+            n_backbone_nodes=(
+                None if initialization != 'skeletal' or n_backbone_nodes in (None, 0)
+                else int(n_backbone_nodes)
+            ),
             initialization=initialization,
             topology_neighbors=int(n_neighbors),
             mutual_knn=bool(mutual_knn),
@@ -283,6 +288,15 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
                 alpha=0.95, zorder=5,
             )
 
+    backbone_nodes = getattr(model, 'backbone_graph_', None)
+    if backbone_nodes is not None and backbone_nodes.nodes:
+        node_points = np.asarray(list(backbone_nodes.nodes.values()), dtype=float)
+        axis.scatter(
+            node_points[:, 0], node_points[:, 1], s=34,
+            facecolors='white', edgecolors='#111111', linewidths=1.0,
+            marker='o', label='backbone nodes', zorder=6,
+        )
+
     junctions = getattr(model, 'junction_regions_', [])
     endpoints = getattr(model, 'endpoint_regions_', [])
     if junctions:
@@ -323,7 +337,7 @@ def render_view(
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
-    backbone_simplification,
+    backbone_simplification, n_backbone_nodes,
 ):
     points = datasets[dataset_name]
     graph, mst_edges = get_knn_graph(
@@ -339,7 +353,7 @@ def render_view(
         electrical_metric, electrical_weight, max_residual_dim,
         coverage_refinement, coverage_tolerance, coverage_max_iterations,
         stability_selection, stability_runs, stability_fraction,
-        backbone_simplification,
+        backbone_simplification, n_backbone_nodes,
     )
 
     fig, axes = plt.subplots(1, 3, figsize=(21, 6), constrained_layout=True)
@@ -400,6 +414,7 @@ def render_view(
     _plot_spline_pipeline(axes[2], points, spline_model, electrical_metric)
     axes[2].set_title(
         f'{dataset_name}: {spline_model.initialization} backbone, '
+        f'{len(spline_model.backbone_graph_.nodes)} nodes, '
         f'simplification ({backbone_simplification:g}× local scale) + '
         f'skeleton splines ({len(spline_model.rib_paths_)} ribs)'
     )
@@ -451,6 +466,15 @@ def display_interactive_controls(
         step=4,
         continuous_update=False,
         description='coarsened k-means',
+        style={'description_width': 'initial'},
+    )
+    backbone_nodes_slider = widgets.IntSlider(
+        value=0,
+        min=0,
+        max=N_SAMPLES,
+        step=1,
+        continuous_update=False,
+        description='backbone nodes (0=auto)',
         style={'description_width': 'initial'},
     )
     backbone_simplification_slider = widgets.FloatSlider(
@@ -598,6 +622,7 @@ def display_interactive_controls(
         [
             dataset_selector, initialization_selector, knn_slider, mutual_switch,
             mst_switch, use_mip_switch, centroid_slider,
+            backbone_nodes_slider,
             backbone_simplification_slider,
             max_cycles_slider, persistence_cap_slider, spline_smoothing_slider,
             electrical_metric_selector, electrical_weight_slider,
@@ -607,11 +632,27 @@ def display_interactive_controls(
         ],
         layout=widgets.Layout(display='flex', flex_flow='row wrap', gap='18px'),
     )
+
+    def update_backbone_nodes_control(*_):
+        is_skeletal = (
+            initialization_selector.value == 'skeletal'
+            or (
+                initialization_selector.value == 'auto'
+                and dataset_selector.value != 'binary-tree'
+            )
+        )
+        backbone_nodes_slider.disabled = not is_skeletal
+
+    initialization_selector.observe(update_backbone_nodes_control, names='value')
+    dataset_selector.observe(update_backbone_nodes_control, names='value')
+    update_backbone_nodes_control()
+
     output = widgets.interactive_output(
         render_view,
         {
             'dataset_name': dataset_selector,
             'n_centroids': centroid_slider,
+            'n_backbone_nodes': backbone_nodes_slider,
             'n_neighbors': knn_slider,
             'mutual_knn': mutual_switch,
             'add_mst': mst_switch,
