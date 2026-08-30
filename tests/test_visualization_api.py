@@ -4,12 +4,16 @@ import numpy as np
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import rgb_to_hsv, to_rgba
+from sklearn.datasets import load_digits
 
 from skeletalembedding import SkeletalEmbedding
 from skeletalembedding.datasets import generate_synthetic_datasets
 from skeletalembedding.visualization import MetroLayout, plot_spline_3d
 from skeletalembedding.visualization.plots import (
+    metro_line_colors,
     plot_embedding_row,
+    plot_metro_lines,
     plot_metro_points,
     route_colors,
 )
@@ -117,6 +121,47 @@ def test_metro_points_use_classes_or_route_ids_as_the_sole_color_source():
     plt.close(regression_figure)
 
 
+def test_metro_lines_use_opaque_saturated_route_colors():
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["circle"]
+    model = SkeletalEmbedding(n_centroids=12, random_state=0).fit(points)
+
+    figure, axis = plt.subplots()
+    plot_metro_lines(axis, model, "saturated lines")
+    figure.canvas.draw()
+
+    line_colors = np.asarray([to_rgba(line.get_color()) for line in axis.lines])
+    expected = metro_line_colors(model)[:len(line_colors)]
+    np.testing.assert_allclose(line_colors, expected)
+    assert np.all(line_colors[:, 3] == 1.0)
+    assert np.all(rgb_to_hsv(line_colors[:, :3])[:, 1] >= 0.65)
+    assert not np.array_equal(line_colors[0], route_colors(model)[0])
+    plt.close(figure)
+
+
+def test_categorical_metro_lines_match_their_route_majority_class():
+    points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["circle"]
+    model = SkeletalEmbedding(n_centroids=12, random_state=0).fit(points)
+    result = model.transform(points)
+    labels = np.zeros(len(points), dtype=int)
+    labels[:10] = 1
+
+    figure, axes = plt.subplots(1, 4)
+    plot_embedding_row(
+        axes, points, labels, model, result,
+        projected_title="data", graph_title="embedding",
+        metro_lines_title="lines", metro_points_title="points",
+    )
+    figure.canvas.draw()
+
+    point_colors = axes[3].collections[-1].get_facecolors()
+    for route, line in enumerate(axes[2].lines):
+        members = np.flatnonzero(result.route_id == route)
+        majority = np.bincount(labels[members]).argmax()
+        expected = point_colors[members[labels[members] == majority][0]]
+        np.testing.assert_allclose(to_rgba(line.get_color()), expected)
+    plt.close(figure)
+
+
 def test_classical_mds_reducer_supports_out_of_sample_transform():
     points = generate_synthetic_datasets(n=80, noise=0.03, random_state=2)["star"]
     points = np.column_stack([points, points[:, 0] ** 2])
@@ -193,3 +238,18 @@ def test_plot_spline_3d_renders_a_volumetric_junction_ellipsoid():
     assert any(trace.name == "reduced graph" for trace in figure.data)
     for coordinate in (ellipsoids[0].x, ellipsoids[0].y, ellipsoids[0].z):
         assert np.ptp(np.asarray(coordinate, dtype=float)) > 1e-8
+
+
+def test_high_dimensional_backbone_does_not_drop_the_detected_junction():
+    points = load_digits().data
+    model = SkeletalEmbedding(
+        n_centroids=36,
+        max_cycles=4,
+        random_state=0,
+        initialization="skeletal",
+    ).fit(points)
+    result = model.transform(points)
+
+    assert len(model.landmark_graph_._components()) == 1
+    assert all(value == 0 for value in model.junction_degree_shortfall_.values())
+    assert np.all(result.route_id >= 0)

@@ -42,6 +42,23 @@ _DARK_ROUTE_PALETTE = (
     '#665126',
     '#3d566e',
 )
+# Saturated route colors for the metro-map view.  These are intentionally
+# separate from the lighter observation palette and the darker analytical
+# route palette: the map lines should read like transit lines at a glance.
+_METRO_LINE_PALETTE = (
+    '#0057B8',  # blue
+    '#D71920',  # red
+    '#00843D',  # green
+    '#7B2CBF',  # purple
+    '#F28C00',  # orange
+    '#00A6D6',  # cyan
+    '#E83E8C',  # pink
+    '#7A4E2D',  # brown
+    '#008C95',  # teal
+    '#C2185B',  # magenta
+    '#4C6FFF',  # royal blue
+    '#E85D04',  # vermilion
+)
 _LIGHT_POINT_PALETTE = (
     '#6baed6',
     '#f28e8e',
@@ -310,10 +327,7 @@ def _target_scatter(axis, x, y, labels, **kwargs):
     if not continuous:
         _, values = np.unique(values, return_inverse=True)
         n_classes = max(1, len(np.unique(values)))
-        point_palette = [
-            _LIGHT_POINT_PALETTE[index % len(_LIGHT_POINT_PALETTE)]
-            for index in range(n_classes)
-        ]
+        point_palette = _light_target_palette(n_classes)
         point_cmap = ListedColormap(point_palette, name='light_points')
         point_norm = BoundaryNorm(
             np.arange(-0.5, n_classes + 0.5), ncolors=n_classes,
@@ -338,11 +352,60 @@ def _target_scatter(axis, x, y, labels, **kwargs):
     return artist
 
 
+def _light_target_palette(n_classes: int) -> list[str]:
+    """Return the categorical colors used for displayed observations."""
+    return [
+        _LIGHT_POINT_PALETTE[index % len(_LIGHT_POINT_PALETTE)]
+        for index in range(n_classes)
+    ]
+
+
+def _majority_target_line_colors(labels, route_ids, n_routes: int) -> np.ndarray:
+    """Color each route by the most common categorical target on that route."""
+    target = np.asarray(labels)
+    route_ids = np.asarray(route_ids, dtype=int)
+    _, encoded_target = np.unique(target, return_inverse=True)
+    palette = np.asarray([
+        to_rgba(color) for color in _light_target_palette(len(np.unique(encoded_target)))
+    ])
+    colors = np.empty((max(1, n_routes), 4), dtype=float)
+    for route in range(n_routes):
+        members = np.flatnonzero(route_ids == route)
+        if len(members):
+            majority = np.bincount(encoded_target[members]).argmax()
+            colors[route] = palette[majority]
+        else:
+            colors[route] = metro_line_colors_for_count(n_routes)[route]
+    return colors
+
+
 def route_colors(model: Any) -> np.ndarray:
     """Return stable route colors shared by every display mode."""
     count = max(1, len(model.routes_))
     palette = np.asarray([to_rgba(color) for color in _DARK_ROUTE_PALETTE])
     return palette[np.arange(count) % len(palette)]
+
+
+def metro_line_colors(model: Any) -> np.ndarray:
+    """Return vivid, opaque colors for the metro-map route lines."""
+    count = max(1, len(model.routes_))
+    return metro_line_colors_for_count(count)
+
+
+def metro_line_colors_for_count(count: int) -> np.ndarray:
+    """Return vivid, opaque metro-line colors for a route count."""
+    count = max(1, count)
+    palette = np.asarray([to_rgba(color) for color in _METRO_LINE_PALETTE])
+    return palette[np.arange(count) % len(palette)]
+
+
+def _target_line_colors(model, labels, result) -> np.ndarray:
+    """Choose target-matched colors for categorical data, otherwise map colors."""
+    if _has_categorical_target(labels, len(result.route_id)):
+        return _majority_target_line_colors(
+            labels, result.route_id, len(model.routes_),
+        )
+    return metro_line_colors(model)
 
 
 def plot_labeled_graph(axis, points, labels, model, title, colors=None):
@@ -532,7 +595,7 @@ def plot_metro_lines(axis, model, title, layout=None, colors=None):
     if layout is None:
         layout = MetroLayout(model, random_state=0).fit()
     if colors is None:
-        colors = route_colors(model)
+        colors = metro_line_colors(model)
     for index, curve in enumerate(layout.transform_splines()):
         if model.routes_[index].closed:
             curve = np.vstack([curve, curve[0]])
@@ -592,6 +655,7 @@ def plot_metro_points(
 
 def plot_metro_graph(
     axis, labels, model, result, title, layout=None, colors=None, residual_width=0.02,
+    line_colors=None,
 ):
     """Plot the combined metro routes, observations, and stations."""
     if layout is None:
@@ -601,7 +665,11 @@ def plot_metro_graph(
     if colors is None:
         colors = route_colors(model)
     plot_metro_points(axis, labels, model, result, title, layout=layout, colors=colors)
-    plot_metro_lines(axis, model, title, layout=layout, colors=colors)
+    plot_metro_lines(
+        axis, model, title, layout=layout,
+        colors=_target_line_colors(model, labels, result)
+        if line_colors is None else line_colors,
+    )
 
 
 def plot_embedding_row(
@@ -622,6 +690,7 @@ def plot_embedding_row(
     classification_metrics=None,
     route_metrics=None,
     metro_residual_width=0.02,
+    line_colors=None,
 ):
     """Render the standard four-panel embedding row used by the notebooks.
 
@@ -650,7 +719,9 @@ def plot_embedding_row(
             model, random_state=0, residual_width=metro_residual_width,
         ).fit(result)
     plot_metro_lines(
-        axes[2], model, metro_lines_title, layout=layout, colors=colors,
+        axes[2], model, metro_lines_title, layout=layout,
+        colors=line_colors if line_colors is not None
+        else _target_line_colors(model, labels, result),
     )
     plot_metro_points(
         axes[3], labels, model, result, metro_points_title,
@@ -701,6 +772,7 @@ __all__ = [
     'evaluate_route_classification',
     'evaluate_route_regression',
     'evaluate_route_target',
+    'metro_line_colors',
     'plot_embedding_row',
     'plot_graph_embedding',
     'plot_labeled_graph',

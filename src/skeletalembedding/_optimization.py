@@ -139,6 +139,11 @@ def select_backbone_mip(
             lower.append(-np.inf)
             upper.append(0.0)
 
+    # A persistence diagram does not always provide a geometrically useful
+    # representative (the lightweight fallback can, for example, select a
+    # small noisy loop close to a junction).  Do not make the whole backbone
+    # problem infeasible in that case: the explicit landmark degree and cycle
+    # constraints still describe the requested topology.
     for cycle_class in range(max(0, int(cycle_class_count))):
         row = np.zeros(variable_count, dtype=float)
         tagged = [
@@ -146,7 +151,15 @@ def select_backbone_mip(
             if cycle_class in getattr(candidate, "persistent_cycle_classes", ())
         ]
         if not tagged:
-            return {}, f"infeasible:missing-persistent-cycle-class:{cycle_class}"
+            if not (
+                requested_cycles > 0
+                and any(
+                    specification["kind"] in {"junction", "cycle_anchor"}
+                    for specification in specifications
+                )
+            ):
+                return {}, f"infeasible:missing-persistent-cycle-class:{cycle_class}"
+            continue
         row[tagged] = 1.0
         rows.append(row)
         lower.append(1.0)

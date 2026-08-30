@@ -10,6 +10,7 @@ _PLOT_NAMES = (
     "evaluate_route_classification",
     "evaluate_route_regression",
     "evaluate_route_target",
+    "metro_line_colors",
     "plot_embedding_row",
     "plot_graph_embedding",
     "plot_labeled_graph",
@@ -18,6 +19,7 @@ _PLOT_NAMES = (
     "plot_metro_points",
     "plot_projected_graph",
     "plot_spline_3d",
+    "metro_line_colors",
     "route_colors",
 )
 _PLOT_NAME_SET = set(_PLOT_NAMES)

@@ -506,7 +506,7 @@ class SkeletalEmbedding:
             if self.backbone_paths_ is None:
                 chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
             else:
-                chain["points"] = self._chain_support_points(chain)
+                chain["points"] = self._chain_support_points(chain, points)
             if self.central_junction_locked_ and chain.get("closed"):
                 chain["points"] = self._figure_eight_support_points(points, chain)
             elif (
@@ -560,6 +560,7 @@ class SkeletalEmbedding:
                     start_tangent=start_tangent,
                     end_tangent=end_tangent,
                     weights=chain.get("spline_weights"),
+                    preserve_support_order=bool(chain.get("preserve_support_order", False)),
                 )
             )
         self._anchor_closed_junctions()
@@ -992,6 +993,27 @@ class SkeletalEmbedding:
                     [endpoint_member],
                 )]
         if (
+            not junctions
+            and not self.linear_structure_
+            and self.requested_cycle_count_ == 0
+            and len(routing_components) == 1
+            and len(routing_components[0]) >= 2
+        ):
+            # A curved open manifold has no reliable local endpoint vote at
+            # every scale: bends and the noisy inner end of a spiral can look
+            # like short terminal regions.  The weighted graph diameter gives
+            # the two terminals of the whole connected component and lets
+            # the dense routing substrate carry the spline across the full
+            # curve rather than fitting a short landmark-to-landmark chord.
+            left, right = _geodesic_diameter_endpoints(
+                routing_graph,
+                routing_components[0],
+            )
+            endpoints = [
+                EndpointRegion(points[left].copy(), 1.0, [left]),
+                EndpointRegion(points[right].copy(), 1.0, [right]),
+            ]
+        if (
             len(routing_components) > 1
             and self.requested_cycle_count_ >= len(routing_components)
             and sum(component_cycle_counts) >= len(routing_components)
@@ -1002,6 +1024,7 @@ class SkeletalEmbedding:
             # promote it to skeletal topology.
             junctions = []
             endpoints = []
+        self.loop_branch_endpoint_center_ = loop_branch_endpoint_center
         self.junction_regions_ = junctions
         self.endpoint_regions_ = endpoints
         self.junctions_ = junctions
@@ -1080,16 +1103,24 @@ class SkeletalEmbedding:
         else:
             excluded_vertices: set[int] = set()
             if loop_branch_endpoint_center is not None:
-                exclusion_radius = max(
-                    6.0 * self.local_scale_,
-                    0.25 * np.linalg.norm(
-                        loop_branch_endpoint_center - junctions[0].center
-                    ),
+                branch_vector = (
+                    loop_branch_endpoint_center - junctions[0].center
                 )
-                excluded_vertices = set(np.flatnonzero(
-                    np.linalg.norm(points - loop_branch_endpoint_center, axis=1)
-                    <= exclusion_radius
-                ).astype(int))
+                branch_length = float(np.linalg.norm(branch_vector))
+                branch_direction = branch_vector / max(branch_length, 1e-12)
+                offsets = points - junctions[0].center
+                longitudinal = offsets @ branch_direction
+                orthogonal = np.linalg.norm(
+                    offsets - longitudinal[:, None] * branch_direction[None, :],
+                    axis=1,
+                )
+                corridor_width = max(4.0 * self.local_scale_, 0.25 * branch_length)
+                in_branch_corridor = (
+                    (longitudinal >= 0.05 * branch_length)
+                    & (longitudinal <= 1.15 * branch_length)
+                    & (orthogonal <= corridor_width)
+                )
+                excluded_vertices = set(np.flatnonzero(in_branch_corridor).astype(int))
             anchor_vertices = _cycle_anchor_vertices(
                 routing_graph,
                 cycle_target,
@@ -1272,6 +1303,23 @@ class SkeletalEmbedding:
                         candidates.append((neighbour, branch, scores[branch]))
                 else:
                     candidates.append((neighbour, None, 0.0))
+            if not candidates and len(directions):
+                # In high-dimensional clouds, local PCA directions can be
+                # noisy enough that the configured angular gate rejects every
+                # edge at a detected junction. Preserve connectivity by using
+                # the best available arm assignment rather than allowing the
+                # later selector to fall back to disconnected endpoint pairs.
+                candidates = [
+                    (
+                        neighbour,
+                        int(np.argmin([
+                            _departure_angle(direction, points[neighbour] - specification["center"])
+                            for direction in directions
+                        ])),
+                        0.0,
+                    )
+                    for neighbour in search_graph.adjacency[source]
+                ]
             candidates.sort(key=lambda item: item[2])
             return [(neighbour, branch) for neighbour, branch, _ in candidates]
 
@@ -1455,6 +1503,36 @@ class SkeletalEmbedding:
             expected_cube_edges = len(specifications) * cube_dimension // 2
             if cube_dimension >= 3 and len(cube_candidates) == expected_cube_edges:
                 candidates = cube_candidates
+
+        if loop_branch_endpoint_center is not None:
+            # In a loop-with-branch, the terminal is a real branch endpoint,
+            # not another point on the cycle.  Allowing the optimizer to
+            # connect that endpoint through a cycle anchor can satisfy all
+            # degree and cycle-count constraints while assigning one arc of
+            # the loop to the open stem.  Keep the endpoint's logical route
+            # attached directly to the junction; cycle anchors must then be
+            # consumed by the closed route.
+            junction_ids = {
+                index for index, specification in enumerate(specifications)
+                if specification["kind"] == "junction"
+            }
+            endpoint_ids = {
+                index for index, specification in enumerate(specifications)
+                if specification["kind"] == "endpoint"
+            }
+            candidates = [
+                candidate for candidate in candidates
+                if not (
+                    (
+                        candidate.start_landmark in endpoint_ids
+                        or candidate.end_landmark in endpoint_ids
+                    )
+                    and not (
+                        candidate.start_landmark in junction_ids
+                        or candidate.end_landmark in junction_ids
+                    )
+                )
+            ]
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self._tag_persistent_cycle_candidates(candidates)
         self.candidate_paths_ = list(candidates)
@@ -1842,8 +1920,13 @@ class SkeletalEmbedding:
                         cycle_index,
                     }))
 
-    def _chain_support_points(self, chain: dict[str, Any]) -> Array:
+    def _chain_support_points(self, chain: dict[str, Any], points: Array) -> Array:
         """Concatenate stored point-level paths for one abstract route chain."""
+        if chain.get("closed") and getattr(self, "loop_branch_endpoint_center_", None) is not None:
+            cycle_support = self._loop_branch_cycle_support_points(points)
+            if cycle_support is not None:
+                chain["preserve_support_order"] = True
+                return cycle_support
         nodes = list(chain["nodes"])
         if chain.get("closed") and not any(
             self.landmark_graph_.degree(node) >= 3 for node in set(nodes)
@@ -1874,6 +1957,52 @@ class SkeletalEmbedding:
         if not segments:
             return np.asarray([self.landmark_graph_.nodes[node] for node in nodes], dtype=float)
         return np.vstack(segments)
+
+    def _loop_branch_cycle_support_points(self, points: Array) -> Array | None:
+        """Order observations around a loop while excluding its open stem.
+
+        Candidate shortest paths on a noisy kNN graph can share long portions
+        of a loop. Concatenating those paths would make the closed support
+        sequence visit the same arc twice and forces a spline to bend back on
+        itself. The branch corridor is known from the terminal landmark, so
+        remove it and order the remaining observations once around their
+        principal two-dimensional plane.
+        """
+        if len(self.junction_regions_) != 1 or len(self.endpoint_regions_) != 1:
+            return None
+        junction = np.asarray(self.junction_regions_[0].center, dtype=float)
+        endpoint = np.asarray(self.loop_branch_endpoint_center_, dtype=float)
+        branch = endpoint - junction
+        branch_length = float(np.linalg.norm(branch))
+        if branch_length <= 1e-12 or len(points) < 8:
+            return None
+        direction = branch / branch_length
+        offsets = np.asarray(points, dtype=float) - junction
+        longitudinal = offsets @ direction
+        orthogonal = np.linalg.norm(
+            offsets - longitudinal[:, None] * direction[None, :], axis=1,
+        )
+        corridor_width = max(4.0 * self.local_scale_, 0.12 * branch_length)
+        stem = (
+            (longitudinal >= 0.05 * branch_length)
+            & (longitudinal <= 1.15 * branch_length)
+            & (orthogonal <= corridor_width)
+        )
+        cycle_points = np.asarray(points[~stem], dtype=float)
+        if len(cycle_points) < 8:
+            return None
+
+        centered = cycle_points - np.mean(cycle_points, axis=0, keepdims=True)
+        _, singular_values, components = np.linalg.svd(centered, full_matrices=False)
+        if len(singular_values) < 2 or singular_values[1] <= 1e-12:
+            return None
+        plane = centered @ components[:2].T
+        angles = np.arctan2(plane[:, 1], plane[:, 0])
+        ordered = cycle_points[np.argsort(angles, kind="mergesort")]
+        start = int(np.argmin(np.linalg.norm(ordered - junction, axis=1)))
+        ordered = np.roll(ordered, -start, axis=0)
+        ordered[0] = junction
+        return np.vstack([ordered, junction])
 
     def _ordered_closed_component_points(self, nodes: list[int]) -> Array | None:
         """Return a full, non-backtracking support order for a simple loop.

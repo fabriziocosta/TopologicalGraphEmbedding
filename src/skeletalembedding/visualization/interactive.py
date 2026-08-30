@@ -313,7 +313,9 @@ def plot_spline_3d(
                         name="reduced graph" if edge_index == 0 else "reduced graph edge",
                         legendgroup="reduced-graph",
                         showlegend=edge_index == 0,
-                        line=dict(color="black", width=3),
+                        # This is an auxiliary landmark graph, not a fitted
+                        # spline. Keep it visually subordinate when enabled.
+                        line=dict(color="rgba(70, 70, 70, 0.45)", width=1, dash="dot"),
                         hoverinfo="name",
                     )
                 )

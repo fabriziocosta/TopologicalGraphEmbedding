@@ -9,8 +9,9 @@ from typing import Any
 import numpy as np
 
 try:
-    from scipy.interpolate import splev, splprep, splrep
+    from scipy.interpolate import PchipInterpolator, splev, splprep, splrep
 except ImportError as exc:  # pragma: no cover
+    PchipInterpolator = None
     splev = None
     splprep = None
     splrep = None
@@ -23,6 +24,8 @@ Array = np.ndarray
 
 def _evaluate_tck(values: Array, tck: Any) -> Array:
     """Evaluate either a parametric or coordinate-wise spline representation."""
+    if isinstance(tck, tuple) and tck and all(callable(item) for item in tck):
+        return np.column_stack([item(values) for item in tck])
     if isinstance(tck, tuple) and tck and isinstance(tck[0], tuple):
         return np.column_stack([splev(values, coordinate_tck) for coordinate_tck in tck])
     return np.asarray(splev(values, tck)).T
@@ -179,6 +182,7 @@ def _fit_curve(
     end_tangent: Array | None = None,
     tangent_epsilon: float = 0.05,
     weights: Array | None = None,
+    preserve_support_order: bool = False,
 ) -> _SplineRoute:
     points = np.asarray(points, dtype=float)
     fit_weights = None if weights is None else np.asarray(weights, dtype=float)
@@ -260,11 +264,31 @@ def _fit_curve(
     # coordinate dimensions.  High-dimensional embeddings use one univariate
     # FITPACK spline per coordinate instead.
     scipy_supported_dimension = points.shape[1] < 11
-    if splprep is not None and splrep is not None and len(points) >= 3:
+    if (
+        closed
+        and preserve_support_order
+        and PchipInterpolator is not None
+        and len(points) >= 3
+    ):
+        # Periodic cubic splines can overshoot between noisy support points
+        # and reverse direction near a junction. PCHIP is shape-preserving
+        # in the route parameter and interpolates every support point.
+        periodic_points = np.vstack([points, points[0]])
+        periodic_t = np.r_[t, 1.0]
+        tck = tuple(
+            PchipInterpolator(periodic_t, coordinate, extrapolate=True)
+            for coordinate in periodic_points.T
+        )
+        backend = "scipy-pchip"
+    elif splprep is not None and splrep is not None and len(points) >= 3:
         degree = min(3, len(points) - 1)
 
         def fit_tck(smoothing_value: float) -> Any:
-            smoothing_factor = max(0.0, smoothing_value) * len(points)
+            # FITPACK's ``s`` is a sum of squared residuals.  Expose
+            # smoothing as an RMS/noise scale so that the same control does
+            # not become disproportionately aggressive when a route has
+            # many support points or spans a small coordinate range.
+            smoothing_factor = max(0.0, smoothing_value) ** 2 * len(points)
             if scipy_supported_dimension:
                 fitted, _ = splprep(
                     points.T,
@@ -316,6 +340,11 @@ def _fit_curve(
             backend = "scipy" if scipy_supported_dimension else "scipy-coordinate"
     count = max(32, int(sample_count))
     sample_t = np.linspace(0.0, 1.0, count, endpoint=not closed)
+    if closed and preserve_support_order:
+        # Keep every support parameter in the sampled representation. This
+        # makes the plotted curve visibly pass through its interpolation
+        # points instead of hiding them between a sparse display grid.
+        sample_t = np.unique(np.concatenate([sample_t, t]))
     if tck is not None and splev is not None:
         control_min = np.min(points, axis=0)
         control_max = np.max(points, axis=0)

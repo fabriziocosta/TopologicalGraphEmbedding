@@ -14,6 +14,7 @@ from skeletalembedding._topology import _weighted_symmetric_knn_graph
 from skeletalembedding.datasets import generate_synthetic_datasets
 from skeletalembedding.sklearn import SkeletalEmbeddingTransformer
 from skeletalembedding.visualization.metro import MetroLayout
+from skeletalembedding.visualization.workflows.digits import make_spiral
 
 
 @pytest.mark.parametrize(
@@ -335,6 +336,56 @@ def test_topological_loop_branch_keeps_stem_open():
     assert sum(chain["closed"] for chain in model.route_chains_) == 1
     endpoint = model.endpoint_regions_[0].center
     assert endpoint[0] > 1.5
+    closed_chain = next(chain for chain in model.route_chains_ if chain["closed"])
+    open_chain = next(chain for chain in model.route_chains_ if not chain["closed"])
+    assert model.junction_regions_[0].node_id in open_chain["nodes"]
+    assert model.endpoint_regions_[0].node_id in open_chain["nodes"]
+    assert model.endpoint_regions_[0].node_id not in closed_chain["nodes"]
+    closed_route = model.routes_[model.route_chains_.index(closed_chain)]
+    support_distances = np.min(
+        np.linalg.norm(
+            closed_chain["points"][:, None, :] - closed_route.samples[None, :, :],
+            axis=2,
+        ),
+        axis=1,
+    )
+    assert np.max(support_distances) < 1e-8
+    loop_center = np.mean(closed_chain["points"][:, :2], axis=0)
+    loop_angles = np.unwrap(np.arctan2(
+        closed_route.samples[:, 1] - loop_center[1],
+        closed_route.samples[:, 0] - loop_center[0],
+    ))
+    # The noisy lifted observations can introduce a tiny angular jitter in
+    # the display plane, but the fitted route must not materially reverse.
+    assert np.all(np.diff(loop_angles) >= -0.02)
+
+
+def test_topological_open_spiral_route_covers_the_whole_component():
+    points_2d = make_spiral(n_samples=500, noise=0.045, random_state=5)
+    points = np.column_stack([
+        points_2d,
+        np.random.default_rng(9).normal(scale=0.045, size=len(points_2d)),
+    ])
+    model = SkeletalEmbedding(
+        n_centroids=36,
+        n_neighbors=6,
+        topology_neighbors=6,
+        persistence_threshold=4.0,
+        persistence_max_points=60,
+        spline_smoothing=0.08,
+        max_cycles=4,
+        standardize=False,
+        random_state=0,
+        initialization="skeletal",
+    ).fit(points)
+    result = model.transform(points)
+
+    assert model.realized_cycle_count_ == 0
+    assert len(model.route_chains_) == 1
+    assert not model.route_chains_[0]["closed"]
+    curve = model.routes_[0].samples * model.scale_ + model.mean_
+    assert np.all(np.ptp(curve, axis=0)[:2] >= 0.7 * np.ptp(points, axis=0)[:2])
+    assert np.median(result.residual_norm) < 0.15
 
 
 def test_topological_complex_workflow_keeps_cycle_backbones_closed():
