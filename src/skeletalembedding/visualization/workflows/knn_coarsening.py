@@ -135,16 +135,16 @@ def _style_axis(axis, points):
 
 def get_spline_embedding(
     dataset_name, n_centroids, n_neighbors, mutual_knn, add_mst,
-    initialization, use_mip, max_cycles, spline_smoothing, persistence_max_points,
+    max_cycles, spline_smoothing, persistence_max_points,
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
     backbone_simplification, n_backbone_nodes,
 ):
-    """Fit and cache the downstream skeletal pipeline."""
+    """Fit and cache the downstream topology + MIP pipeline."""
     key = (
         dataset_name, int(n_centroids), int(n_neighbors), bool(mutual_knn),
-        bool(add_mst), str(initialization), bool(use_mip), int(max_cycles),
+        bool(add_mst), int(max_cycles),
         float(spline_smoothing), int(persistence_max_points),
         str(electrical_metric), float(electrical_weight),
         int(max_residual_dim), bool(coverage_refinement),
@@ -157,20 +157,16 @@ def get_spline_embedding(
     if key not in spline_model_cache:
         use_resistance = electrical_metric in {'effective resistance', 'edge leverage'}
         use_current = electrical_metric == 'aggregate current'
-        if initialization == 'auto':
-            initialization = 'legacy_coarsen' if dataset_name == 'binary-tree' else 'skeletal'
         model = SkeletalEmbedding(
             n_centroids=int(n_centroids),
             n_backbone_nodes=(
-                None if initialization != 'skeletal' or n_backbone_nodes in (None, 0)
+                None if n_backbone_nodes in (None, 0)
                 else int(n_backbone_nodes)
             ),
-            initialization=initialization,
             topology_neighbors=int(n_neighbors),
             mutual_knn=bool(mutual_knn),
             add_mst=bool(add_mst),
             max_cycles=int(max_cycles),
-            use_mip=bool(use_mip),
             spline_smoothing=float(spline_smoothing),
             spline_control_mode='backbone',
             merge_junction_distance=(
@@ -287,7 +283,7 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
 
 def render_view(
     dataset_name, n_centroids, n_neighbors, mutual_knn, add_mst,
-    initialization, use_mip, max_cycles, spline_smoothing, persistence_max_points,
+    max_cycles, spline_smoothing, persistence_max_points,
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
@@ -303,7 +299,7 @@ def render_view(
     )
     spline_model = get_spline_embedding(
         dataset_name, n_centroids, n_neighbors, mutual_knn, add_mst,
-        initialization, use_mip, max_cycles, spline_smoothing, persistence_max_points,
+        max_cycles, spline_smoothing, persistence_max_points,
         electrical_metric, electrical_weight, max_residual_dim,
         coverage_refinement, coverage_tolerance, coverage_max_iterations,
         stability_selection, stability_runs, stability_fraction,
@@ -367,9 +363,10 @@ def render_view(
 
     _plot_spline_pipeline(axes[2], points, spline_model, electrical_metric)
     axes[2].set_title(
-        f'{dataset_name}: {spline_model.initialization} backbone, '
+        f'{dataset_name}: topology + MIP backbone, '
         f'{len(spline_model.backbone_graph_.nodes)} nodes, '
-        f'simplification ({backbone_simplification:g}× local scale) + '
+        f'MIP {spline_model.mip_status_}, '
+        f'junction merge radius ({backbone_simplification:g}× local scale) + '
         f'skeleton splines ({len(spline_model.rib_paths_)} ribs)'
     )
 
@@ -401,16 +398,6 @@ def display_interactive_controls(
         options=dataset_names,
         value=dataset_names[0],
         description='dataset',
-        style={'description_width': 'initial'},
-    )
-    initialization_selector = widgets.Dropdown(
-        options=[
-            ('automatic (legacy tree / skeletal otherwise)', 'auto'),
-            ('skeletal (topology-aware)', 'skeletal'),
-            ('legacy coarsen', 'legacy_coarsen'),
-        ],
-        value='auto',
-        description='initialization',
         style={'description_width': 'initial'},
     )
     centroid_slider = widgets.IntSlider(
@@ -457,11 +444,6 @@ def display_interactive_controls(
         step=10,
         continuous_update=False,
         description='topology subsample cap',
-        style={'description_width': 'initial'},
-    )
-    use_mip_switch = widgets.Checkbox(
-        value=True,
-        description='use MIP backbone selection',
         style={'description_width': 'initial'},
     )
     spline_smoothing_slider = widgets.FloatSlider(
@@ -574,8 +556,8 @@ def display_interactive_controls(
 
     controls = widgets.HBox(
         [
-            dataset_selector, initialization_selector, knn_slider, mutual_switch,
-            mst_switch, use_mip_switch, centroid_slider,
+            dataset_selector, knn_slider, mutual_switch,
+            mst_switch, centroid_slider,
             backbone_nodes_slider,
             backbone_simplification_slider,
             max_cycles_slider, persistence_cap_slider, spline_smoothing_slider,
@@ -587,20 +569,6 @@ def display_interactive_controls(
         layout=widgets.Layout(display='flex', flex_flow='row wrap', gap='18px'),
     )
 
-    def update_backbone_nodes_control(*_):
-        is_skeletal = (
-            initialization_selector.value == 'skeletal'
-            or (
-                initialization_selector.value == 'auto'
-                and dataset_selector.value != 'binary-tree'
-            )
-        )
-        backbone_nodes_slider.disabled = not is_skeletal
-
-    initialization_selector.observe(update_backbone_nodes_control, names='value')
-    dataset_selector.observe(update_backbone_nodes_control, names='value')
-    update_backbone_nodes_control()
-
     output = widgets.interactive_output(
         render_view,
         {
@@ -610,8 +578,6 @@ def display_interactive_controls(
             'n_neighbors': knn_slider,
             'mutual_knn': mutual_switch,
             'add_mst': mst_switch,
-            'initialization': initialization_selector,
-            'use_mip': use_mip_switch,
             'backbone_simplification': backbone_simplification_slider,
             'max_cycles': max_cycles_slider,
             'spline_smoothing': spline_smoothing_slider,

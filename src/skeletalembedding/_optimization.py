@@ -29,7 +29,6 @@ def select_backbone_mip(
     specifications: Sequence[dict[str, Any]],
     requested_cycles: int,
     *,
-    use_mip: bool = True,
     cycle_class_count: int = 0,
 ) -> tuple[dict[tuple[int, int], Any], str]:
     """Select candidate paths with a small mixed-integer model.
@@ -39,8 +38,8 @@ def select_backbone_mip(
     problem small and makes failures safely recoverable by the existing
     deterministic selector.
     """
-    if not use_mip or not candidates:
-        return {}, "disabled"
+    if not candidates:
+        return {}, "no-candidates"
     try:
         from scipy.optimize import Bounds, LinearConstraint, milp
         from scipy.sparse import lil_matrix

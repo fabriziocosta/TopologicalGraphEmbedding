@@ -61,18 +61,11 @@ route assignments or residuals learned in the original metric.
 
 ## How fitting works
 
-The estimator uses a selectable coarse-to-fine pipeline. The default
-`initialization="skeletal"` path treats the dense weighted
-observation kNN graph is treated as a routing substrate and the backbone is
-selected from explicit topology and connectivity constraints:
-
-Most repository notebook workflows explicitly select
-`initialization="skeletal"` so their figures and summaries use the
-topology-aware initializer. The synthetic binary-tree example is the
-exception: it uses the cycle-free coarsening path so noise between nearby
-branches is not promoted to spurious loops. Select
-`initialization="legacy_coarsen"` explicitly when comparing with the legacy
-initializer. The synthetic notebook runs the six easy
+The estimator uses one topology-aware coarse-to-fine pipeline. The dense
+weighted observation kNN graph is treated as a routing substrate and the
+backbone is selected from explicit topology and connectivity constraints.
+The synthetic binary-tree example uses a cycle-free topology fit so noise
+between nearby branches is not promoted to spurious loops. The synthetic notebook runs the six easy
 examples with `persistence_max_points=60` and puts the polygon/hypercube
 examples in a separate cell using cap `300` and normalized H1 threshold `4.0`.
 Electrical resistance/current terms remain opt-in; mutual-neighbour routing
@@ -86,7 +79,6 @@ and Euclidean-MST augmentation are enabled by default.
    retained. With `add_mst=True`, the exact Euclidean MST is added to the
    selected kNN edges. Disconnected kNN components receive a bridge only for
    electrical computations; route selection keeps their backbones separate.
-   Coarsening mode instead continues with the existing centroid graph.
 3. **Estimate topology and local geometry.** Persistent H1 estimates the
    cycle rank. Multiscale annulus components identify junction and endpoint
    regions, while local PCA estimates ordinary tangents and one outgoing
@@ -94,11 +86,11 @@ and Euclidean-MST augmentation are enabled by default.
 4. **Select the backbone.** Candidate landmark routes are scored using length,
    tangent consistency, density, and optional effective-resistance/current
    support. A small MIP selector enforces connectivity, endpoint/junction
-   degrees, and the requested persistent cycle rank, with a deterministic
-   fallback when the solver is disabled or infeasible.
+   degrees, and the requested persistent cycle rank. If MIP is unavailable or
+   infeasible, the deterministic topology selector remains the fallback.
 5. **Simplify the graph.** Maximal degree-2 paths are collapsed into route
-   support paths. The existing coarsening mode may still prune short terminal
-   branches and merge nearby graph junctions.
+   support paths. Short terminal branches may be pruned and nearby graph
+   junctions may be merged before route fitting.
 6. **Fit route geometry.** Open and closed chains are represented by dense
    sampled curves. SciPy smoothing splines are preferred, with a deterministic
    NumPy fallback for unsupported or numerically difficult cases.
@@ -145,7 +137,6 @@ X = datasets["loop-branch"]
 
 model = SkeletalEmbedding(
     n_centroids=32,
-    initialization="skeletal",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,
@@ -247,7 +238,6 @@ The most important estimator parameters are:
 | `max_residual_dim` | Number of learned transverse residual-PCA coordinates; default `0` |
 | `residual_pca_bandwidth` | Gaussian bandwidth in normalized route position |
 | `residual_subspace_smoothness` | Non-negative neighboring-subspace smoothing strength |
-| `initialization` | `legacy_coarsen` for the legacy initializer or `skeletal` for topology-aware routing |
 | `junction_scales` / `junction_inner_fraction` | Multiscale annulus settings for local branch detection |
 | `junction_confidence` | Minimum stable branch-count confidence |
 | `use_local_pca` / `local_pca_neighbors` | Enable local tangent and branch-direction estimation |
@@ -262,7 +252,6 @@ The most important estimator parameters are:
 | `standardize` | Whether fitting distances are computed after featurewise standardization |
 | `persistence_max_points` | Cap used by the persistence calculation for large point clouds |
 | `random_state` | Reproducibility for landmark initialization and capped persistence sampling |
-| `use_mip` | Use the small SciPy mixed-integer backbone selector; default `True` |
 | `coverage_refinement` | Add coverage ribs after residual-PCA fitting; default `False` |
 | `coverage_error_tolerance` / `coverage_quantile` | Post-PCA coverage stopping criterion |
 | `coverage_max_iterations` / `coverage_max_ribs` | Limits on adaptive refinement |
@@ -304,7 +293,7 @@ reducer = fit_reducer(X, method="umap", n_neighbors=15)
 UMAP's `n_neighbors` changes the visual layout's local/global emphasis only.
 It does not refit the topological graph. PCA and classical MDS are available
 as deterministic display alternatives. The high-dimensional notebook exposes the UMAP
-neighbor count, metro dispersion width, and (for topology-aware initialization)
+neighbor count, metro dispersion width, and (for topology-aware fitting)
 the final backbone node count through interactive sliders. A value of zero
 leaves the backbone node count automatic.
 

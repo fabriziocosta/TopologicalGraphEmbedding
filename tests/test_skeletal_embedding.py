@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from sklearn.base import clone
 
+import skeletalembedding.embedding as embedding_module
 from skeletalembedding import SkeletalEmbedding
 from skeletalembedding.datasets import generate_synthetic_datasets
 from skeletalembedding.sklearn import SkeletalEmbeddingTransformer
@@ -13,10 +14,38 @@ def _plane(seed=0):
     return np.column_stack((x, np.zeros(len(x))))
 
 
-def test_skeletal_api_and_legacy_initializer():
-    estimator = SkeletalEmbedding(n_neighbors=6, initialization="skeletal")
-    assert clone(estimator).get_params()["initialization"] == "skeletal"
-    assert SkeletalEmbedding(initialization="legacy_coarsen").initialization == "legacy_coarsen"
+def test_topology_mip_api_has_no_legacy_controls():
+    estimator = SkeletalEmbedding(n_neighbors=6)
+    assert "initialization" not in clone(estimator).get_params()
+    assert "use_mip" not in estimator.get_params()
+    with pytest.raises(TypeError):
+        SkeletalEmbedding(initialization="legacy_coarsen")
+    with pytest.raises(TypeError):
+        SkeletalEmbedding(use_mip=False)
+
+
+def test_topology_always_attempts_mip(monkeypatch):
+    calls = []
+    original = embedding_module.select_backbone_mip
+
+    def wrapped(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(embedding_module, "select_backbone_mip", wrapped)
+    SkeletalEmbedding(n_centroids=8, random_state=0).fit(_plane())
+    assert calls
+
+
+def test_infeasible_mip_uses_deterministic_topology_fallback(monkeypatch):
+    monkeypatch.setattr(
+        embedding_module,
+        "select_backbone_mip",
+        lambda *args, **kwargs: ({}, "infeasible:test"),
+    )
+    model = SkeletalEmbedding(n_centroids=8, random_state=0).fit(_plane())
+    assert model.mip_status_ == "infeasible:test"
+    assert len(model.backbone_graph_.nodes) > 0
 
 
 def test_skeletal_backbone_node_target_subdivides_edges_and_preserves_topology():
@@ -24,7 +53,6 @@ def test_skeletal_backbone_node_target_subdivides_edges_and_preserves_topology()
     model = SkeletalEmbedding(
         n_centroids=12,
         n_backbone_nodes=9,
-        initialization="skeletal",
         random_state=3,
     ).fit(points)
 
@@ -41,7 +69,6 @@ def test_skeletal_backbone_spacing_subdivides_long_edges():
     model = SkeletalEmbedding(
         n_centroids=12,
         backbone_node_spacing=0.5,
-        initialization="skeletal",
         random_state=3,
     ).fit(points)
 
@@ -55,7 +82,6 @@ def test_skeletal_backbone_node_target_enforces_topological_lower_bound():
         SkeletalEmbedding(
             n_centroids=20,
             n_backbone_nodes=2,
-            initialization="skeletal",
             random_state=0,
         ).fit(points)
 
@@ -63,7 +89,6 @@ def test_skeletal_backbone_node_target_enforces_topological_lower_bound():
         n_centroids=20,
         n_backbone_nodes=2,
         backbone_node_policy="allow_topology_relaxation",
-        initialization="skeletal",
         random_state=0,
     ).fit(points)
     assert len(relaxed.backbone_graph_.nodes) == 2
@@ -75,7 +100,6 @@ def test_skeletal_backbone_node_target_preserves_cycle_rank_when_refining_cycle(
     model = SkeletalEmbedding(
         n_centroids=20,
         n_backbone_nodes=8,
-        initialization="skeletal",
         random_state=0,
     ).fit(points)
 
@@ -84,14 +108,9 @@ def test_skeletal_backbone_node_target_preserves_cycle_rank_when_refining_cycle(
     assert np.all(model.transform(points).route_id >= 0)
 
 
-def test_backbone_resolution_controls_are_validated_for_skeletal_mode():
+def test_backbone_resolution_controls_are_validated_for_topology_mode():
     with pytest.raises(ValueError, match="mutually exclusive"):
         SkeletalEmbedding(n_backbone_nodes=8, backbone_node_spacing=0.5)
-    with pytest.raises(ValueError, match="require initialization='skeletal'"):
-        SkeletalEmbedding(
-            initialization="legacy_coarsen",
-            n_backbone_nodes=8,
-        )
 
 
 def test_skeleton_metadata_and_reconstruction_diagnostics():
@@ -142,7 +161,6 @@ def test_strict_coverage_adds_ribs_and_improves_error():
 
 def test_sklearn_adapter_exposes_new_parameters():
     transformer = SkeletalEmbeddingTransformer(
-        initialization="skeletal",
         n_neighbors=6,
         n_backbone_nodes=8,
         coverage_refinement=True,

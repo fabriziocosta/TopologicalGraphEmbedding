@@ -26,7 +26,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         backbone_node_spacing: float | None = None,
         backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
-        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -62,7 +61,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
-        use_mip: bool = True,
         coverage_refinement: bool = False,
         coverage_error_tolerance: float | None = None,
         coverage_relative_tolerance: float | None = None,
@@ -93,7 +91,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.backbone_node_spacing = backbone_node_spacing
         self.backbone_node_policy = backbone_node_policy
         self.n_neighbors = n_neighbors
-        self.initialization = initialization
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = spline_smoothing
         self.spline_control_mode = spline_control_mode
@@ -129,7 +126,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.routing_resistance_weight = routing_resistance_weight
         self.routing_current_weight = routing_current_weight
         self.use_tangent_boundary_conditions = use_tangent_boundary_conditions
-        self.use_mip = use_mip
         self.coverage_refinement = coverage_refinement
         self.coverage_error_tolerance = coverage_error_tolerance
         self.coverage_relative_tolerance = coverage_relative_tolerance
@@ -162,7 +158,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
             backbone_node_spacing=self.backbone_node_spacing,
             backbone_node_policy=self.backbone_node_policy,
             n_neighbors=self.n_neighbors,
-            initialization=self.initialization,
             persistence_threshold=self.persistence_threshold,
             spline_smoothing=self.spline_smoothing,
             spline_control_mode=self.spline_control_mode,
@@ -198,7 +193,6 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
             routing_resistance_weight=self.routing_resistance_weight,
             routing_current_weight=self.routing_current_weight,
             use_tangent_boundary_conditions=self.use_tangent_boundary_conditions,
-            use_mip=self.use_mip,
             coverage_refinement=self.coverage_refinement,
             coverage_error_tolerance=self.coverage_error_tolerance,
             coverage_relative_tolerance=self.coverage_relative_tolerance,
@@ -308,7 +302,6 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
         backbone_node_spacing: float | None = None,
         backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
-        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -344,7 +337,6 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
-        use_mip: bool = True,
         coverage_refinement: bool = False,
         coverage_error_tolerance: float | None = None,
         coverage_relative_tolerance: float | None = None,
@@ -376,7 +368,6 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
             backbone_node_spacing=backbone_node_spacing,
             backbone_node_policy=backbone_node_policy,
             n_neighbors=n_neighbors,
-            initialization=initialization,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,
             spline_control_mode=spline_control_mode,
@@ -412,7 +403,6 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
             routing_resistance_weight=routing_resistance_weight,
             routing_current_weight=routing_current_weight,
             use_tangent_boundary_conditions=use_tangent_boundary_conditions,
-            use_mip=use_mip,
             coverage_refinement=coverage_refinement,
             coverage_error_tolerance=coverage_error_tolerance,
             coverage_relative_tolerance=coverage_relative_tolerance,

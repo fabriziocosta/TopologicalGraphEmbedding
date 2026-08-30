@@ -53,10 +53,8 @@ from ._topology import (
     _merge_nearby_junctions,
     _minimum_spanning_tree,
     _normalize_persistence_diagram,
-    _ordered_path_graph,
     _prune_short_terminal_branches,
     _standardize,
-    _symmetric_knn_edges,
     _weighted_symmetric_knn_graph,
 )
 from .results import EmbeddingResult
@@ -114,7 +112,6 @@ class SkeletalEmbedding:
         backbone_node_spacing: float | None = None,
         backbone_node_policy: str = "topology_preserving",
         n_neighbors: int = 6,
-        initialization: str = "skeletal",
         persistence_threshold: float | None = None,
         spline_smoothing: float = 0.02,
         spline_control_mode: str = "support",
@@ -150,7 +147,6 @@ class SkeletalEmbedding:
         routing_resistance_weight: float = 0.0,
         routing_current_weight: float = 0.0,
         use_tangent_boundary_conditions: bool = True,
-        use_mip: bool = True,
         coverage_refinement: bool = False,
         coverage_error_tolerance: float | None = None,
         coverage_relative_tolerance: float | None = None,
@@ -220,14 +216,6 @@ class SkeletalEmbedding:
             raise ValueError("residual_pca_bandwidth must be positive and finite")
         if residual_subspace_smoothness < 0.0 or not np.isfinite(residual_subspace_smoothness):
             raise ValueError("residual_subspace_smoothness must be finite and non-negative")
-        if initialization not in {"skeletal", "legacy_coarsen"}:
-            raise ValueError("initialization must be 'skeletal' or 'legacy_coarsen'")
-        if initialization != "skeletal" and (
-            n_backbone_nodes is not None or backbone_node_spacing is not None
-        ):
-            raise ValueError(
-                "backbone node resolution controls require initialization='skeletal'"
-            )
         if spline_control_mode not in {"support", "backbone"}:
             raise ValueError("spline_control_mode must be 'support' or 'backbone'")
         if local_pca_neighbors < 2:
@@ -304,7 +292,6 @@ class SkeletalEmbedding:
         )
         self.backbone_node_policy = str(backbone_node_policy)
         self.n_neighbors = int(n_neighbors)
-        self.initialization = str(initialization)
         self.persistence_threshold = persistence_threshold
         self.spline_smoothing = float(spline_smoothing)
         self.spline_control_mode = str(spline_control_mode)
@@ -324,7 +311,6 @@ class SkeletalEmbedding:
         self.max_residual_dim = int(max_residual_dim)
         self.residual_pca_bandwidth = float(residual_pca_bandwidth)
         self.residual_subspace_smoothness = float(residual_subspace_smoothness)
-        self.initialization = str(initialization)
         self.detect_cycles = bool(detect_cycles)
         self.detect_junctions = bool(detect_junctions)
         self.junction_scales = junction_scales
@@ -342,7 +328,6 @@ class SkeletalEmbedding:
         self.routing_resistance_weight = float(routing_resistance_weight)
         self.routing_current_weight = float(routing_current_weight)
         self.use_tangent_boundary_conditions = bool(use_tangent_boundary_conditions)
-        self.use_mip = bool(use_mip)
         self.coverage_refinement = bool(coverage_refinement)
         self.coverage_error_tolerance = coverage_error_tolerance
         self.coverage_relative_tolerance = coverage_relative_tolerance
@@ -395,19 +380,11 @@ class SkeletalEmbedding:
         self.normalized_persistence_diagram_ = _normalize_persistence_diagram(
             self.persistence_diagram_, self.local_scale_
         )
-        if self.initialization == "skeletal":
-            # Topological mode uses scale-free persistence.  The legacy mode
-            # retains its historical distance-unit threshold semantics.
-            threshold = 3.0 if self.persistence_threshold is None else float(self.persistence_threshold)
-            self.persistence_threshold_ = float(threshold)
-            diagram = self.normalized_persistence_diagram_
-        elif self.persistence_threshold is None:
-            threshold = 4.0 * self.local_scale_
-            self.persistence_threshold_ = float(threshold)
-            diagram = self.persistence_diagram_
-        else:
-            self.persistence_threshold_ = float(self.persistence_threshold)
-            diagram = self.persistence_diagram_
+        # Topology fitting uses scale-free persistence in normalized
+        # nearest-neighbour units.
+        threshold = 3.0 if self.persistence_threshold is None else float(self.persistence_threshold)
+        self.persistence_threshold_ = float(threshold)
+        diagram = self.normalized_persistence_diagram_
         if len(diagram):
             lifetimes = diagram[:, 1] - diagram[:, 0]
             significant = np.isfinite(lifetimes) & (lifetimes >= self.persistence_threshold_)
@@ -429,7 +406,7 @@ class SkeletalEmbedding:
         self.cycle_support_ = np.ones(len(self.persistent_cycles_), dtype=float)
         self.cycle_count_ = self.persistent_cycle_count_
         self.requested_cycle_count_ = min(self.max_cycles, self.persistent_cycle_count_)
-        if self.initialization == "skeletal" and not self.detect_cycles:
+        if not self.detect_cycles:
             self.requested_cycle_count_ = 0
 
         self.centroids_ = _kmeans(points, self.n_centroids, self.random_state)
@@ -453,7 +430,7 @@ class SkeletalEmbedding:
         else:
             self.linear_center_ = None
             self.linear_direction_ = None
-        if self.initialization == "skeletal" and self.linear_structure_:
+        if self.linear_structure_:
             # A noisy line can carry a small numerical H1 bar in a subsample;
             # its one-dimensional geometry is a stronger constraint than that
             # artifact and must not create a cycle anchor.
@@ -463,55 +440,30 @@ class SkeletalEmbedding:
         self.central_junction_center_ = None
         self.face_cycle_count_ = 0
         self.hypercube_dimension_ = None
-        if self.initialization == "skeletal":
-            graph, backbone_paths = self._topological_backbone(points, self.centroids_)
-            graph, backbone_paths = self._resize_skeletal_backbone(
-                graph, backbone_paths, points
-            )
-            self.backbone_paths_ = backbone_paths
-            self.merge_junction_distance_ = 0.0
-            representatives = _approximate_cycle_representatives(
-                self.routing_graph_, self.persistent_cycle_count_
-            )
-            for cycle, representative in zip(self.persistent_cycles_, representatives):
-                cycle.representative = representative
-        elif self.linear_structure_:
-            # A noisy sample of a line can produce a branched MST and a
-            # borderline H1 bar.  A PCA-ordered chain is the appropriate
-            # low-complexity skeleton for this geometry.
-            self.requested_cycle_count_ = 0
-            self.merge_junction_distance_ = 0.0
-            graph = _ordered_path_graph(self.centroids_, ordering_points=centroids_original)
-        else:
-            graph = _minimum_spanning_tree(self.centroids_)
-            if self.prune_short_branches:
-                _prune_short_terminal_branches(graph, self.prune_branch_factor)
-            if self.merge_junction_distance is None:
-                merge_distance = 13.0 * self.local_scale_
-            else:
-                merge_distance = self.merge_junction_distance
-            self.merge_junction_distance_ = float(merge_distance)
-            graph = _merge_nearby_junctions(graph, merge_distance)
-            self.backbone_paths_ = None
+        graph, backbone_paths = self._topological_backbone(points, self.centroids_)
+        graph, backbone_paths = self._resize_skeletal_backbone(
+            graph, backbone_paths, points
+        )
+        self.backbone_paths_ = backbone_paths
+        self.merge_junction_distance_ = 0.0
+        representatives = _approximate_cycle_representatives(
+            self.routing_graph_, self.persistent_cycle_count_
+        )
+        for cycle, representative in zip(self.persistent_cycles_, representatives):
+            cycle.representative = representative
         if not hasattr(self, "mip_status_"):
             self.mip_status_ = "not_applicable"
         self.landmark_graph_ = graph
         self.backbone_graph_ = graph
-        if self.backbone_paths_ is None:
-            self.topology_candidate_edges_ = _symmetric_knn_edges(
-                self.landmark_graph_, self.topology_neighbors_,
-            )
-        else:
-            self.topology_candidate_edges_ = set()
+        self.topology_candidate_edges_ = set()
 
         target_cycles = self.requested_cycle_count_
-        if self.backbone_paths_ is None:
-            while self.landmark_graph_.cycle_rank() < target_cycles:
-                candidate = self._best_cycle_edge()
-                if candidate is None:
-                    break
-                left, right, weight = candidate
-                self.landmark_graph_.add_edge(left, right, weight)
+        while self.landmark_graph_.cycle_rank() < target_cycles:
+            candidate = self._best_cycle_edge()
+            if candidate is None:
+                break
+            left, right, weight = candidate
+            self.landmark_graph_.add_edge(left, right, weight)
 
         self.realized_cycle_count_ = self.landmark_graph_.cycle_rank()
         self.topology_shortfall_ = max(0, target_cycles - self.realized_cycle_count_)
@@ -1894,14 +1846,6 @@ class SkeletalEmbedding:
             candidates,
             specifications,
             self.requested_cycle_count_,
-            use_mip=(
-                self.use_mip
-                and self.initialization == "skeletal"
-                and (
-                    self.requested_cycle_count_ > 0
-                    or any(specification["kind"] == "junction" for specification in specifications)
-                )
-            ),
             cycle_class_count=len(self.persistent_cycles_),
         )
         self.mip_status_ = mip_status
@@ -2848,7 +2792,6 @@ class SkeletalEmbedding:
                     backbone_node_spacing=self.backbone_node_spacing,
                     backbone_node_policy=self.backbone_node_policy,
                     n_neighbors=self.n_neighbors,
-                    initialization=self.initialization,
                     persistence_threshold=self.persistence_threshold,
                     spline_smoothing=self.spline_smoothing,
                     spline_control_mode=self.spline_control_mode,
@@ -2884,7 +2827,6 @@ class SkeletalEmbedding:
                     routing_resistance_weight=self.routing_resistance_weight,
                     routing_current_weight=self.routing_current_weight,
                     use_tangent_boundary_conditions=self.use_tangent_boundary_conditions,
-                    use_mip=self.use_mip,
                     coverage_refinement=bool(self.coverage_refinement and len(reference_ribs)),
                     coverage_error_tolerance=self.coverage_error_tolerance,
                     coverage_relative_tolerance=self.coverage_relative_tolerance,

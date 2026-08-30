@@ -65,7 +65,6 @@ def fit_datasets(
     summary = []
     for index, (name, (points, labels)) in enumerate(datasets.items()):
         model = SkeletalEmbedding(
-            initialization="skeletal",
             n_centroids=n_centroids,
             persistence_threshold=persistence_threshold,
             spline_smoothing=spline_smoothing,

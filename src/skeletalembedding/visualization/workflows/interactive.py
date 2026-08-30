@@ -138,16 +138,6 @@ def display_interactive_viewer(
         style=style,
         layout=control_width,
     ) if dataset_factory is not None else None
-    initialization_selector = widgets.Dropdown(
-        options=[
-            ("skeletal (topology-aware)", "skeletal"),
-            ("legacy coarsen", "legacy_coarsen"),
-        ],
-        value="skeletal",
-        description="initialization",
-        style=style,
-        layout=widgets.Layout(width="300px"),
-    )
     centroid_slider = widgets.IntSlider(
         value=int(default_n_centroids), min=8, max=64, step=4,
         description="centroids", continuous_update=False,
@@ -173,10 +163,6 @@ def display_interactive_viewer(
     )
     add_mst_checkbox = widgets.Checkbox(
         value=True, description="add Euclidean MST", style=style, layout=control_width,
-    )
-    use_mip_checkbox = widgets.Checkbox(
-        value=True, description="use MIP backbone selection", style=style,
-        layout=control_width,
     )
     smoothing_slider = widgets.FloatSlider(
         value=0.02, min=0.0, max=0.20, step=0.005,
@@ -444,9 +430,6 @@ def display_interactive_viewer(
     def update_reducer_controls(*_: Any) -> None:
         umap_neighbors_slider.disabled = reducer_selector.value != "umap"
 
-    def update_backbone_controls(*_: Any) -> None:
-        backbone_nodes_slider.disabled = initialization_selector.value != "skeletal"
-
     def update_coverage_controls(*_: Any) -> None:
         coverage_tolerance_slider.disabled = coverage_mode.value == "auto"
 
@@ -512,14 +495,12 @@ def display_interactive_viewer(
         render_key = (
             name,
             data_key,
-            initialization_selector.value,
             centroid_slider.value,
             backbone_nodes_slider.value,
             model_neighbors_slider.value,
             topology_neighbors_slider.value,
             mutual_knn_checkbox.value,
             add_mst_checkbox.value,
-            use_mip_checkbox.value,
             smoothing_slider.value,
             spline_control_selector.value,
             routing_length_slider.value,
@@ -592,21 +573,14 @@ def display_interactive_viewer(
         coverage_max_ribs = (
             None if coverage_ribs_slider.value == 0 else coverage_ribs_slider.value
         )
-        n_backbone_nodes = (
-            None
-            if initialization_selector.value != "skeletal"
-            or backbone_nodes_slider.value == 0
-            else int(backbone_nodes_slider.value)
-        )
+        n_backbone_nodes = None if backbone_nodes_slider.value == 0 else int(backbone_nodes_slider.value)
         model = SkeletalEmbedding(
-            initialization=initialization_selector.value,
             n_centroids=centroid_slider.value,
             n_backbone_nodes=n_backbone_nodes,
             n_neighbors=model_neighbors_slider.value,
             topology_neighbors=topology_neighbors_slider.value,
             mutual_knn=mutual_knn_checkbox.value,
             add_mst=add_mst_checkbox.value,
-            use_mip=use_mip_checkbox.value,
             persistence_threshold=threshold,
             persistence_max_points=persistence_cap_slider.value,
             spline_smoothing=smoothing_slider.value,
@@ -724,7 +698,8 @@ def display_interactive_viewer(
             else "normalized_accuracy"
         )
         metrics = {
-            "initialization": model.initialization,
+            "mode": "topology + MIP",
+            "mip_status": model.mip_status_,
             "dimensions": points.shape[1],
             "model_neighbors": model.n_neighbors,
             "topology_neighbors": model.topology_neighbors_,
@@ -749,10 +724,8 @@ def display_interactive_viewer(
         last_render_key = render_key
 
     reducer_selector.observe(update_reducer_controls, names="value")
-    initialization_selector.observe(update_backbone_controls, names="value")
     coverage_mode.observe(update_coverage_controls, names="value")
     update_reducer_controls()
-    update_backbone_controls()
     update_coverage_controls()
     data_controls = [dataset_selector]
     if points_slider is not None:
@@ -766,14 +739,12 @@ def display_interactive_viewer(
                 _section(
                     widgets,
                     "Graph fitting",
-                    initialization_selector,
                     centroid_slider,
                     backbone_nodes_slider,
                     model_neighbors_slider,
                     topology_neighbors_slider,
                     mutual_knn_checkbox,
                     add_mst_checkbox,
-                    use_mip_checkbox,
                     smoothing_slider,
                     spline_control_selector,
                     routing_length_slider,

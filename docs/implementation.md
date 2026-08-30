@@ -15,7 +15,7 @@ The implementation uses four related graph objects:
   `n_centroids` landmarks. It is the main graph used for route selection.
 - The backbone graph is the selected abstract graph after topology and
   connectivity constraints have been applied.
-- In skeletal initialization, optional node-resolution controls are applied
+- In topology fitting, optional node-resolution controls are applied
   after topology selection. `n_backbone_nodes` targets an exact graph-node
   count by subdividing or contracting degree-two edges, while
   `backbone_node_spacing` subdivides long edges to a maximum fitted-space
@@ -70,23 +70,9 @@ The local scale is the median non-zero nearest-neighbor distance. If every
 observation is duplicated and no such distance exists, the implementation uses
 a small finite floor instead of producing `NaN` values.
 
-## 3. Landmark compression and initialization
+## 3. Landmark compression and topology fitting
 
-### 3.1 Coarsening mode
-
-`initialization="legacy_coarsen"` preserves the old implementation. The
-implementation compresses observations with deterministic NumPy k-means using
-k-means++ initialization, constructs a landmark minimum spanning tree, adds
-local cycle-closing candidates, and extracts route chains.
-
-The MST guarantees a connected initial structure. It is not treated as a
-global cycle generator. Additional candidate edges come from the
-symmetrized landmark k-nearest-neighbor graph, controlled by
-`topology_neighbors`.
-
-### 3.2 Topological mode
-
-`initialization="skeletal"` builds a weighted, symmetric kNN graph
+Topology fitting builds a weighted, symmetric kNN graph
 over the fitting coordinates. Edge lengths supply geometric costs. Affinity
 weights supply conductances for optional electrical diagnostics. With
 `mutual_knn=True`, only reciprocal neighbor pairs are retained. The kNN graph
@@ -104,6 +90,11 @@ Landmark compression is used to keep topology selection tractable. Distance
 calculations are blocked: point-anchor Gram blocks are formed instead of a
 dense `(n, k, d)` tensor. A block of `b` observations and `m` landmarks uses
 memory proportional to the block rather than to the full observation set.
+
+A small MIP selects the final candidate routes using connectivity, degree, and
+cycle constraints. When MIP is unavailable or infeasible, the deterministic
+topology selector remains the fallback and records the reason in
+`mip_status_`.
 
 ## 4. Local geometry and topology selection
 
@@ -313,7 +304,6 @@ from skeletalembedding import SkeletalEmbedding
 
 model = SkeletalEmbedding(
     n_centroids=32,
-    initialization="skeletal",
     max_cycles=5,
     topology_neighbors=6,
     random_state=0,

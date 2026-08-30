@@ -52,7 +52,7 @@ def test_binary_tree_workflow_keeps_the_fitted_graph_acyclic():
 
     model = models["binary-tree"]
     assert summary[0]["cycles"] == 0
-    assert model.initialization == "legacy_coarsen"
+    assert model.mip_status_.startswith(("optimal", "unavailable", "no-candidates", "infeasible"))
     assert model.n_centroids == 64
     assert all(not route.closed for route in model.routes_)
 
@@ -68,7 +68,7 @@ def test_plot_network_uses_public_name():
 def test_plot_embedding_row_ignores_unresolved_station_ids():
     points = generate_synthetic_datasets(n=100, noise=0.03, random_state=1)["star"]
     model = SkeletalEmbedding(
-        initialization="skeletal", n_centroids=12, random_state=0,
+        n_centroids=12, random_state=0,
     ).fit(points)
     result = model.transform(points)
     model.endpoint_node_ids_ = [*model.endpoint_node_ids_, None]
@@ -219,7 +219,6 @@ def test_plot_spline_3d_renders_a_volumetric_junction_ellipsoid():
         max_cycles=4,
         random_state=0,
         standardize=False,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -246,7 +245,6 @@ def test_high_dimensional_backbone_does_not_drop_the_detected_junction():
         n_centroids=36,
         max_cycles=4,
         random_state=0,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 

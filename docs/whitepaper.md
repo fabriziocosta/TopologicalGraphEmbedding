@@ -86,11 +86,10 @@ landmark graph is used for most topology-selection operations. Distance
 calculations are blocked so that the implementation does not materialize a
 full observation-by-landmark-by-feature tensor.
 
-Two initialization schemes are available. The `coarsen` scheme constructs a
-landmark minimum spanning tree and then considers local cycle-closing edges.
-The `topological` scheme uses the neighborhood graph together with local
-geometry and topology diagnostics when selecting the backbone. `coarsen`
-remains the compatibility default in the Python API.
+The topology-aware scheme uses the neighborhood graph together with local
+geometry and topology diagnostics when selecting the backbone. A small MIP
+solves the connectivity, degree, and cycle constraints, with deterministic
+fallback when the solver cannot produce a feasible solution.
 
 ### 2.3 Local geometry and topology
 

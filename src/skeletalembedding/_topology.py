@@ -42,7 +42,7 @@ Endpoint = EndpointRegion
 
 @dataclass
 class TopologyEstimate:
-    """Diagnostics produced by the topology initialization stage."""
+    """Diagnostics produced by the topology fitting stage."""
 
     cycle_count: int
     persistence_diagram: Array
@@ -804,18 +804,6 @@ def _symmetric_knn_edges(graph: _LandmarkGraph, neighbors: int) -> set[tuple[int
         for column in nearest:
             edges.add(graph._key(node, node_ids[int(column)]))
     return edges
-
-
-def _ordered_path_graph(centroids: Array, ordering_points: Array | None = None) -> _LandmarkGraph:
-    """Build a single chain by ordering landmarks along their first PCA axis."""
-    reference = centroids if ordering_points is None else ordering_points
-    centered_reference = reference - np.mean(reference, axis=0)
-    _, _, components = np.linalg.svd(centered_reference, full_matrices=False)
-    order = np.argsort(centered_reference @ components[0])
-    graph = _LandmarkGraph({index: point for index, point in enumerate(centroids)})
-    for left, right in pairwise(order):
-        graph.add_edge(int(left), int(right))
-    return graph
 
 
 def _is_nearly_linear(points: Array, tolerance: float) -> bool:

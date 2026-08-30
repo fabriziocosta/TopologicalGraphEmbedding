@@ -65,7 +65,9 @@ def test_torus_coverage_adds_wireframe_cycles_without_changing_persistent_topolo
 def test_mip_fallback_diagnostics_are_deterministic():
     candidate = CandidatePath(0, 1, [0, 1], 1.0, 1.0, 0.0)
     specifications = [{"kind": "endpoint"}, {"kind": "endpoint"}]
-    assert select_backbone_mip([candidate], specifications, 0, use_mip=False) == ({}, "disabled")
+    selected, status = select_backbone_mip([candidate], specifications, 0)
+    assert status == "optimal"
+    assert selected == {(0, 1): candidate}
     assert select_backbone_mip(
         [candidate], specifications, 0, cycle_class_count=1,
     )[1].startswith("infeasible:missing-persistent-cycle-class")

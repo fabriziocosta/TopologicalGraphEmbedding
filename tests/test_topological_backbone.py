@@ -35,7 +35,6 @@ def test_topological_backbone_preserves_synthetic_structure(
         n_centroids=16,
         max_cycles=5,
         random_state=0,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -59,7 +58,6 @@ def test_topological_electrical_diagnostics_and_kron_reduction():
     model = SkeletalEmbedding(
         n_centroids=12,
         random_state=0,
-        initialization="skeletal",
         use_effective_resistance=True,
         use_electrical_flow=True,
         use_kron_reduction=True,
@@ -107,14 +105,13 @@ def test_mst_flag_augments_mutual_knn_edges_before_component_recording():
 
 def test_topological_parameters_propagate_through_sklearn_adapter():
     estimator = SkeletalEmbeddingTransformer(
-        initialization="skeletal",
         junction_scales=[1.0, 2.0, 3.0],
         use_effective_resistance=True,
         mutual_knn=True,
         add_mst=True,
     )
     cloned = clone(estimator)
-    assert cloned.get_params()["initialization"] == "skeletal"
+    assert "initialization" not in cloned.get_params()
     assert cloned.get_params()["junction_scales"] == [1.0, 2.0, 3.0]
     assert cloned.get_params()["use_effective_resistance"] is True
     assert cloned.get_params()["mutual_knn"] is True
@@ -122,7 +119,7 @@ def test_topological_parameters_propagate_through_sklearn_adapter():
 
 
 def test_topological_parameter_validation():
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         SkeletalEmbedding(initialization="unknown")
     with pytest.raises(ValueError):
         SkeletalEmbedding(junction_inner_fraction=1.0)
@@ -135,7 +132,6 @@ def test_topological_junction_routes_are_stable_across_kmeans_seeds():
     model = SkeletalEmbedding(
         n_centroids=32,
         random_state=2,
-        initialization="skeletal",
     ).fit(points)
 
     assert len(model.junctions_) == 1
@@ -152,7 +148,6 @@ def test_topological_binary_tree_produces_a_valid_embedding():
     model = SkeletalEmbedding(
         n_centroids=32,
         random_state=5,
-        initialization="skeletal",
     ).fit(points)
 
     result = model.transform(points)
@@ -166,7 +161,6 @@ def test_topological_star_keeps_one_junction_across_kmeans_seeds():
         model = SkeletalEmbedding(
             n_centroids=32,
             random_state=random_state,
-            initialization="skeletal",
         ).fit(points)
 
         assert len(model.junctions_) == 1
@@ -188,7 +182,6 @@ def test_topological_disconnected_cycles_keep_separate_closed_routes():
         max_cycles=4,
         spline_smoothing=0.1,
         random_state=11,
-        initialization="skeletal",
     ).fit(points)
 
     assert model.component_cycle_counts_ == [1, 1]
@@ -207,7 +200,6 @@ def test_topological_disconnected_moons_use_complete_arc_endpoints():
         spline_smoothing=0.1,
         max_cycles=4,
         random_state=10,
-        initialization="skeletal",
     ).fit(points)
 
     curves = [spline.samples * model.scale_ + model.mean_ for spline in model.routes_]
@@ -229,7 +221,6 @@ def test_topological_disconnected_cycles_keep_full_loop_spans():
         persistence_threshold=4.0,
         spline_smoothing=0.1,
         random_state=11,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -245,7 +236,6 @@ def test_topological_single_loop_spline_covers_both_sides_of_cycle():
     model = SkeletalEmbedding(
         n_centroids=32,
         random_state=3,
-        initialization="skeletal",
     ).fit(points)
 
     samples = model.routes_[0].samples
@@ -264,7 +254,6 @@ def test_topological_dense_single_loop_is_not_split_by_coarse_tree():
         random_state=0,
         persistence_threshold=4.0,
         persistence_max_points=60,
-        initialization="skeletal",
     ).fit(points)
 
     assert model.realized_cycle_count_ == 1
@@ -279,7 +268,6 @@ def test_topological_line_spline_is_linear_in_original_metric():
     model = SkeletalEmbedding(
         n_centroids=32,
         random_state=0,
-        initialization="skeletal",
     ).fit(points)
 
     samples = model.routes_[0].samples
@@ -295,7 +283,6 @@ def test_topological_shared_cycles_use_opposite_metro_sides():
     model = SkeletalEmbedding(
         n_centroids=32,
         random_state=0,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
     layout = MetroLayout(model).fit(result)
@@ -322,7 +309,6 @@ def test_topological_loop_branch_keeps_stem_open():
     model = SkeletalEmbedding(
         n_centroids=36,
         random_state=0,
-        initialization="skeletal",
         persistence_threshold=4.0,
         persistence_max_points=60,
         spline_smoothing=0.08,
@@ -376,7 +362,6 @@ def test_topological_open_spiral_route_covers_the_whole_component():
         max_cycles=4,
         standardize=False,
         random_state=0,
-        initialization="skeletal",
     ).fit(points)
     result = model.transform(points)
 
@@ -411,7 +396,6 @@ def test_topological_complex_workflow_keeps_cycle_backbones_closed():
                 random_state=0,
                 persistence_threshold=4.0,
                 persistence_max_points=300,
-                initialization="skeletal",
             ).fit(points)
         result = model.transform(points)
         assert model.realized_cycle_count_ == model.requested_cycle_count_
@@ -434,7 +418,6 @@ def test_topological_hypercube_recovers_all_corners_and_faces():
         random_state=1,
         persistence_threshold=4.0,
         persistence_max_points=300,
-        initialization="skeletal",
     ).fit(points)
 
     assert model.hypercube_dimension_ == 3

@@ -59,7 +59,6 @@ def fit_datasets(
     for index, (name, points) in enumerate(datasets.items()):
         is_binary_tree = name == 'binary-tree'
         model = SkeletalEmbedding(
-            initialization="legacy_coarsen" if is_binary_tree else "skeletal",
             n_centroids=max(n_centroids, 64) if is_binary_tree else n_centroids,
             persistence_threshold=persistence_threshold,
             persistence_max_points=persistence_max_points,

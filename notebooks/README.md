@@ -11,15 +11,14 @@ edit its parameters and rerun the function call. The hypercube dimension is cont
 `STAR_BRANCHES` (default `4`). The hypercube is displayed through a 2D PCA
 projection.
 
-The main notebook workflows use `initialization="skeletal"` explicitly. This
-is also the library default; `initialization="legacy_coarsen"` is retained for
-the focused coarsening view and comparison cases. The workflow wrappers also silence the expected constraint-warning
+The main notebook workflows use the topology-aware pipeline with MIP
+selection. The workflow wrappers also silence the expected constraint-warning
 when a noisy interactive refit cannot realize every requested incidence;
 direct estimator use still exposes that diagnostic normally.
 
 The synthetic notebook separates the six easy examples from the
 polygon-with-circles and hypercube examples into independent plotting cells.
-The binary-tree example uses the cycle-free coarsening path with additional
+The binary-tree example uses a cycle-free topology fit with additional
 landmarks so noisy branches are not mistaken for loops. The easy cell uses
 `persistence_max_points=60`; the complex cell uses `300`
 with normalized H1 threshold `4.0`. Run the complex cell only when its higher

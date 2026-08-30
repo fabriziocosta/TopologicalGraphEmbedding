@@ -86,7 +86,6 @@ def fit_catalog_entry(name: str, dataset: Any, *, smoothness: float = 0.02, rand
     )
     is_binary_tree = name == "synthetic/binary-tree"
     model = SkeletalEmbedding(
-        initialization="legacy_coarsen" if is_binary_tree else "skeletal",
         n_centroids=36,
         persistence_threshold=4.0 if is_planar else None,
         spline_smoothing=float(smoothness),

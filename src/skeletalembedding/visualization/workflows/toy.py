@@ -71,7 +71,6 @@ def fit_toy_datasets(
     summary_rows: list[dict[str, Any]] = []
     for index, (name, (points, labels)) in enumerate(datasets.items()):
         model = SkeletalEmbedding(
-            initialization="legacy_coarsen" if name == "spiral" else "skeletal",
             n_centroids=45,
             persistence_threshold=4.0,
             spline_smoothing=0.1,
