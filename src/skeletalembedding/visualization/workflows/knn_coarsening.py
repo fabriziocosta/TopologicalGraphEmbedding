@@ -425,7 +425,7 @@ def display_interactive_controls(
         step=0.5,
         readout_format='.1f',
         continuous_update=False,
-        description='backbone simplification',
+        description='junction merge radius',
         style={'description_width': 'initial'},
     )
     max_cycles_slider = widgets.IntSlider(
@@ -449,7 +449,7 @@ def display_interactive_controls(
     spline_smoothing_slider = widgets.FloatSlider(
         value=0.02,
         min=0.0,
-        max=0.03,
+        max=2.0,
         step=0.001,
         readout_format='.3f',
         continuous_update=False,

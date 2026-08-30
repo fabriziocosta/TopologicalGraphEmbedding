@@ -60,7 +60,9 @@ bone-marrow MARS-seq experiment. It downloads the public `paul15.h5` file to
 `~/.cache/skeletalembedding/`, preprocesses expression without using
 cell labels during fitting, denoises the graph-fitting space with 50 PCA
 components, and shows PCA, intrinsic graph coordinates, the fitted skeletal
-network, broad lineages, and marker-expression panels.
+network, broad lineages, and marker-expression panels. Its final cell also
+provides the shared grouped interactive viewer for refitting the graph in the
+same 50-component PCA space.
 
 `interactive_knn_coarsening.ipynb` provides a focused routing-substrate view;
 its implementation lives in
