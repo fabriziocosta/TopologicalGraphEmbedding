@@ -230,6 +230,19 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
             alpha=0.88, zorder=3,
         ))
 
+    spline_count = int(getattr(model, 'backbone_element_count_', len(model.splines_)))
+    spline_colors = plt.get_cmap('tab10', max(1, spline_count))
+    for route_id, spline in enumerate(model.splines_[:spline_count]):
+        samples = np.asarray(spline.samples, dtype=float)
+        if len(samples) == 0:
+            continue
+        if spline.closed:
+            samples = np.vstack([samples, samples[0]])
+        axis.plot(
+            samples[:, 0], samples[:, 1], color=spline_colors(route_id),
+            linewidth=2.2, alpha=0.92, zorder=4,
+        )
+
     backbone_nodes = getattr(model, 'backbone_graph_', None)
     if backbone_nodes is not None and backbone_nodes.nodes:
         node_points = np.asarray(list(backbone_nodes.nodes.values()), dtype=float)
@@ -258,6 +271,7 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
 
     axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=1.0, zorder=0)
     axis.plot([], [], color='black', linewidth=2.5, label='backbone edges')
+    axis.plot([], [], color='#4c78a8', linewidth=2.2, label='fitted splines')
     axis.legend(loc='best', fontsize=7, frameon=False)
     axis.text(
         0.02, 0.98,
