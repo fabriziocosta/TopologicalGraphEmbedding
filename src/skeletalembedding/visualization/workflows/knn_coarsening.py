@@ -15,14 +15,15 @@ from skeletalembedding._topology import _euclidean_mst_edges, _local_scale
 from skeletalembedding.datasets import generate_synthetic_datasets
 
 N_SAMPLES = 500
+DATASET_NOISE = 0.045
 
 datasets = {}
 dataset_names = []
 knn_graph_cache = {}
 spline_model_cache = {}
 DEFAULT_KNN_NEIGHBORS = 6
-KNN_MIN = 2
-KNN_MAX = 12
+KNN_MIN = 1
+KNN_MAX = 30
 RANDOM_STATE = 7
 
 def symmetric_knn_graph(
@@ -75,6 +76,23 @@ def build_datasets(n=N_SAMPLES, noise=0.045, random_state=RANDOM_STATE):
     )
 
 
+def _set_dataset_size(point_fraction):
+    """Regenerate the cached clouds when the point-count multiplier changes."""
+    global datasets, dataset_names, knn_graph_cache, spline_model_cache
+
+    target = max(2, int(round(N_SAMPLES * float(point_fraction))))
+    current = len(next(iter(datasets.values()))) if datasets else None
+    if current == target:
+        return
+
+    datasets = build_datasets(
+        target, noise=DATASET_NOISE, random_state=RANDOM_STATE,
+    )
+    dataset_names = list(datasets)
+    knn_graph_cache = {}
+    spline_model_cache = {}
+
+
 def undirected_edges(graph):
     """Extract each symmetric sparse-graph edge once."""
     coo = graph.tocoo()
@@ -82,6 +100,39 @@ def undirected_edges(graph):
     edges = np.column_stack([coo.row[keep], coo.col[keep]])
     distances = np.asarray(coo.data[keep], dtype=float)
     return edges.astype(int), distances
+
+
+def _display_projection(points):
+    """Return a consistent two-dimensional display projection."""
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2:
+        raise ValueError('points must be a two-dimensional array')
+
+    dimension = points.shape[1]
+    if dimension == 1:
+        center = np.zeros(1, dtype=float)
+        basis = None
+    elif dimension == 2:
+        center = np.zeros(2, dtype=float)
+        basis = None
+    else:
+        center = points.mean(axis=0)
+        _, _, components = np.linalg.svd(points - center, full_matrices=False)
+        basis = components[:2]
+
+    def project(values):
+        values = np.asarray(values, dtype=float)
+        original_shape = values.shape
+        flat = values.reshape(-1, dimension)
+        if dimension == 1:
+            displayed = np.column_stack((flat[:, 0], np.zeros(len(flat))))
+        elif dimension == 2:
+            displayed = flat
+        else:
+            displayed = (flat - center) @ basis.T
+        return displayed.reshape(original_shape[:-1] + (2,))
+
+    return project
 
 
 def _limits(points, pad=0.12):
@@ -175,38 +226,40 @@ def get_spline_embedding(
     return spline_model_cache[key]
 
 
-def _plot_backbone(axis, points, model):
+def _plot_backbone(axis, points, model, project):
     """Draw the observations faintly with the fitted backbone graph."""
+    display_points = project(points)
     backbone_graph = getattr(model, 'backbone_graph_', None)
     if backbone_graph is not None and backbone_graph.edges:
-        backbone_segments = np.asarray([
+        backbone_segments = project(np.asarray([
             [backbone_graph.nodes[left], backbone_graph.nodes[right]]
             for left, right in backbone_graph.edges
-        ])
+        ]))
         axis.add_collection(LineCollection(
             backbone_segments, colors='black', linewidths=2.5,
             alpha=0.88, zorder=3,
         ))
 
     if backbone_graph is not None and backbone_graph.nodes:
-        node_points = np.asarray(list(backbone_graph.nodes.values()), dtype=float)
+        node_points = project(np.asarray(list(backbone_graph.nodes.values()), dtype=float))
         axis.scatter(
             node_points[:, 0], node_points[:, 1], s=34,
             facecolors='white', edgecolors='#111111', linewidths=1.0,
             marker='o', label='backbone nodes', zorder=6,
         )
 
-    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
+    axis.scatter(display_points[:, 0], display_points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
     axis.plot([], [], color='black', linewidth=2.5, label='backbone edges')
     axis.legend(loc='best', fontsize=7, frameon=False)
-    _style_axis(axis, points)
+    _style_axis(axis, display_points)
 
 
-def _plot_splines(axis, points, model):
+def _plot_splines(axis, points, model, project):
     """Draw the observations faintly with fitted splines, without graph edges."""
+    display_points = project(points)
     spline_colors = plt.get_cmap('tab10', max(1, len(model.splines_)))
     for route_id, spline in enumerate(model.splines_):
-        samples = np.asarray(spline.samples, dtype=float)
+        samples = project(np.asarray(spline.samples, dtype=float))
         if len(samples) == 0:
             continue
         if spline.closed:
@@ -216,10 +269,10 @@ def _plot_splines(axis, points, model):
             linewidth=2.2, alpha=0.92, zorder=4,
         )
 
-    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
+    axis.scatter(display_points[:, 0], display_points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
     axis.plot([], [], color='#4c78a8', linewidth=2.2, label='fitted splines')
     axis.legend(loc='best', fontsize=7, frameon=False)
-    _style_axis(axis, points)
+    _style_axis(axis, display_points)
 
 
 def render_view(
@@ -228,9 +281,12 @@ def render_view(
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
-    backbone_simplification, n_backbone_nodes,
+    backbone_simplification, n_backbone_nodes, num_points_fraction=1.0,
 ):
+    _set_dataset_size(num_points_fraction)
     points = datasets[dataset_name]
+    project = _display_projection(points)
+    display_points = project(points)
     graph, mst_edges = get_knn_graph(
         dataset_name, n_neighbors, mutual_knn, add_mst
     )
@@ -245,7 +301,7 @@ def render_view(
     )
 
     fig, axes = plt.subplots(1, 3, figsize=(21, 6), constrained_layout=True)
-    fine_segments = points[fine_edges]
+    fine_segments = display_points[fine_edges]
     axes[0].add_collection(LineCollection(
         fine_segments,
         colors='#6f9fba',
@@ -254,7 +310,7 @@ def render_view(
         zorder=1,
     ))
     axes[0].scatter(
-        points[:, 0], points[:, 1],
+        display_points[:, 0], display_points[:, 1],
         s=11, c='#1e5878', alpha=0.86, linewidths=0, zorder=2,
     )
     axes[0].plot([], [], color='#6f9fba', linewidth=1.05, label='kNN links')
@@ -262,7 +318,7 @@ def render_view(
     graph_description = graph_kind + (' + MST' if add_mst else '')
     if add_mst and len(mst_edges):
         axes[0].add_collection(LineCollection(
-            points[mst_edges],
+            display_points[mst_edges],
             colors='#d95f59',
             linewidths=1.4,
             alpha=0.9,
@@ -271,18 +327,18 @@ def render_view(
         axes[0].plot([], [], color='#d95f59', linewidth=1.4, label='MST edges')
     axes[0].legend(loc='best', fontsize=8, frameon=False)
     axes[0].set_title(f'{dataset_name}: {n_neighbors}-NN graph ({graph_description})')
-    _style_axis(axes[0], points)
+    _style_axis(axes[0], display_points)
 
-    _plot_backbone(axes[1], points, spline_model)
+    _plot_backbone(axes[1], points, spline_model, project)
     axes[1].set_title(
         f'{dataset_name}: fitted backbone, '
         f'{len(spline_model.backbone_graph_.nodes)} nodes, '
         f'{len(spline_model.backbone_graph_.edges)} edges '
         f'({spline_model.mip_status_})'
     )
-    _style_axis(axes[1], points)
+    _style_axis(axes[1], display_points)
 
-    _plot_splines(axes[2], points, spline_model)
+    _plot_splines(axes[2], points, spline_model, project)
     axes[2].set_title(
         f'{dataset_name}: fitted splines, {len(spline_model.splines_)} routes '
         f'({len(spline_model.rib_paths_)} ribs)'
@@ -301,11 +357,13 @@ def display_interactive_controls(
     *, n_samples=500, noise=0.045, random_state=7,
 ):
     """Display the focused kNN/backbone viewer with SkeletalEmbedding controls."""
-    global datasets, dataset_names, N_SAMPLES, RANDOM_STATE, knn_graph_cache, spline_model_cache
+    global datasets, dataset_names, N_SAMPLES, DATASET_NOISE, RANDOM_STATE
+    global knn_graph_cache, spline_model_cache
     import ipywidgets as widgets
     from IPython.display import display
 
     N_SAMPLES = int(n_samples)
+    DATASET_NOISE = float(noise)
     RANDOM_STATE = int(random_state)
     datasets = build_datasets(N_SAMPLES, noise=noise, random_state=RANDOM_STATE)
     dataset_names = list(datasets)
@@ -316,6 +374,16 @@ def display_interactive_controls(
         options=dataset_names,
         value=dataset_names[0],
         description='dataset',
+        style={'description_width': 'initial'},
+    )
+    point_fraction_slider = widgets.FloatSlider(
+        value=1.0,
+        min=0.1,
+        max=10.0,
+        step=0.1,
+        readout_format='.1f',
+        continuous_update=False,
+        description='num points (× base)',
         style={'description_width': 'initial'},
     )
     centroid_slider = widgets.IntSlider(
@@ -471,10 +539,20 @@ def display_interactive_controls(
         description='add Euclidean MST',
         style={'description_width': 'initial'},
     )
+    status_style = (
+        '<style>@keyframes skeletalembedding-spin {'
+        'from { transform: rotate(0deg); }'
+        'to { transform: rotate(360deg); }'
+        '}</style>'
+    )
+    render_status = widgets.HTML(
+        value=status_style + '<span style="color:#4c78a8">● Ready</span>',
+        layout=widgets.Layout(min_width='180px'),
+    )
 
     controls = widgets.HBox(
         [
-            dataset_selector, knn_slider, mutual_switch,
+            dataset_selector, point_fraction_slider, knn_slider, mutual_switch,
             mst_switch, centroid_slider,
             backbone_nodes_slider,
             backbone_simplification_slider,
@@ -483,14 +561,32 @@ def display_interactive_controls(
             max_residual_dim_slider, coverage_switch, coverage_tolerance_slider,
             coverage_iterations_slider, stability_switch, stability_runs_slider,
             stability_fraction_slider,
+            render_status,
         ],
         layout=widgets.Layout(display='flex', flex_flow='row wrap', gap='18px'),
     )
 
+    def render_with_status(**kwargs):
+        render_status.value = status_style + (
+            '<span style="color:#b26a00">'
+            '<span style="display:inline-block; animation:skeletalembedding-spin 1s linear infinite">'
+            '⟳</span> Rendering…</span>'
+        )
+        try:
+            render_view(**kwargs)
+        except Exception:
+            render_status.value = status_style + '<span style="color:#b00020">✖ Render failed</span>'
+            raise
+        point_count = len(datasets[kwargs['dataset_name']])
+        render_status.value = status_style + (
+            f'<span style="color:#2e7d32">● Ready · {point_count:,} points</span>'
+        )
+
     output = widgets.interactive_output(
-        render_view,
+        render_with_status,
         {
             'dataset_name': dataset_selector,
+            'num_points_fraction': point_fraction_slider,
             'n_centroids': centroid_slider,
             'n_backbone_nodes': backbone_nodes_slider,
             'n_neighbors': knn_slider,

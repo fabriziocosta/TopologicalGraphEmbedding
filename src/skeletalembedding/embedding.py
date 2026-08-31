@@ -1842,11 +1842,16 @@ class SkeletalEmbedding:
                     candidate.branch_end,
                 )
 
+        cycle_class_count = (
+            len(self.persistent_cycles_)
+            if self.requested_cycle_count_ > 0
+            else 0
+        )
         mip_selected, mip_status = select_backbone_mip(
             candidates,
             specifications,
             self.requested_cycle_count_,
-            cycle_class_count=len(self.persistent_cycles_),
+            cycle_class_count=cycle_class_count,
         )
         self.mip_status_ = mip_status
         if mip_status == "optimal":
