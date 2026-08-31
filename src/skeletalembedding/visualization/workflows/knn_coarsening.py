@@ -1,4 +1,4 @@
-"""Interactive kNN substrate and SkeletalEmbedding backbone workflow."""
+"""Interactive kNN substrate and fitted SkeletalEmbedding workflow."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 from scipy.sparse import coo_matrix
-from sklearn.cluster import KMeans
 from sklearn.neighbors import kneighbors_graph
 
 from skeletalembedding import SkeletalEmbedding
@@ -70,7 +69,7 @@ def get_knn_graph(dataset_name, n_neighbors, mutual_knn, add_mst):
     return knn_graph_cache[key]
 
 def build_datasets(n=N_SAMPLES, noise=0.045, random_state=RANDOM_STATE):
-    """Build the 2D synthetic datasets used by the coarsening viewer."""
+    """Build the 2D synthetic datasets used by the kNN/backbone viewer."""
     return generate_synthetic_datasets(
         n=int(n), noise=float(noise), random_state=int(random_state),
     )
@@ -83,37 +82,6 @@ def undirected_edges(graph):
     edges = np.column_stack([coo.row[keep], coo.col[keep]])
     distances = np.asarray(coo.data[keep], dtype=float)
     return edges.astype(int), distances
-
-
-def coarsen_knn_graph(points, graph, n_centroids):
-    """Fit centroids and contract the observation kNN edges between clusters."""
-    model = KMeans(
-        n_clusters=int(n_centroids),
-        n_init=10,
-        random_state=RANDOM_STATE,
-    )
-    labels = model.fit_predict(points)
-    centers = model.cluster_centers_
-    sizes = np.bincount(labels, minlength=len(centers))
-
-    fine_edges, _ = undirected_edges(graph)
-    left = labels[fine_edges[:, 0]]
-    right = labels[fine_edges[:, 1]]
-    crosses_cluster = left != right
-    pairs = np.sort(
-        np.column_stack([left[crosses_cluster], right[crosses_cluster]]),
-        axis=1,
-    )
-    if len(pairs):
-        pair_codes = pairs[:, 0] * len(centers) + pairs[:, 1]
-        unique_codes, support = np.unique(pair_codes, return_counts=True)
-        coarse_edges = np.column_stack(
-            np.unravel_index(unique_codes, (len(centers), len(centers)))
-        )
-    else:
-        coarse_edges = np.empty((0, 2), dtype=int)
-        support = np.empty(0, dtype=int)
-    return centers, sizes, coarse_edges.astype(int), support.astype(int)
 
 
 def _limits(points, pad=0.12):
@@ -207,28 +175,37 @@ def get_spline_embedding(
     return spline_model_cache[key]
 
 
-def _plot_spline_pipeline(axis, points, model, electrical_metric):
-    """Draw the point cloud and the final backbone graph only.
-
-    Route supports and fitted splines are intentionally omitted here.  The
-    node-resolution slider should be visually verifiable as graph edges
-    between the final backbone nodes, rather than being obscured by the dense
-    observation-level support geometry.
-    """
-    landmark_graph = getattr(model, 'landmark_graph_', None)
-    if landmark_graph is not None and landmark_graph.edges:
+def _plot_backbone(axis, points, model):
+    """Draw the observations faintly with the fitted backbone graph."""
+    backbone_graph = getattr(model, 'backbone_graph_', None)
+    if backbone_graph is not None and backbone_graph.edges:
         backbone_segments = np.asarray([
-            [landmark_graph.nodes[left], landmark_graph.nodes[right]]
-            for left, right in landmark_graph.edges
+            [backbone_graph.nodes[left], backbone_graph.nodes[right]]
+            for left, right in backbone_graph.edges
         ])
         axis.add_collection(LineCollection(
             backbone_segments, colors='black', linewidths=2.5,
             alpha=0.88, zorder=3,
         ))
 
-    spline_count = int(getattr(model, 'backbone_element_count_', len(model.splines_)))
-    spline_colors = plt.get_cmap('tab10', max(1, spline_count))
-    for route_id, spline in enumerate(model.splines_[:spline_count]):
+    if backbone_graph is not None and backbone_graph.nodes:
+        node_points = np.asarray(list(backbone_graph.nodes.values()), dtype=float)
+        axis.scatter(
+            node_points[:, 0], node_points[:, 1], s=34,
+            facecolors='white', edgecolors='#111111', linewidths=1.0,
+            marker='o', label='backbone nodes', zorder=6,
+        )
+
+    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
+    axis.plot([], [], color='black', linewidth=2.5, label='backbone edges')
+    axis.legend(loc='best', fontsize=7, frameon=False)
+    _style_axis(axis, points)
+
+
+def _plot_splines(axis, points, model):
+    """Draw the observations faintly with fitted splines, without graph edges."""
+    spline_colors = plt.get_cmap('tab10', max(1, len(model.splines_)))
+    for route_id, spline in enumerate(model.splines_):
         samples = np.asarray(spline.samples, dtype=float)
         if len(samples) == 0:
             continue
@@ -239,45 +216,9 @@ def _plot_spline_pipeline(axis, points, model, electrical_metric):
             linewidth=2.2, alpha=0.92, zorder=4,
         )
 
-    backbone_nodes = getattr(model, 'backbone_graph_', None)
-    if backbone_nodes is not None and backbone_nodes.nodes:
-        node_points = np.asarray(list(backbone_nodes.nodes.values()), dtype=float)
-        axis.scatter(
-            node_points[:, 0], node_points[:, 1], s=34,
-            facecolors='white', edgecolors='#111111', linewidths=1.0,
-            marker='o', label='backbone nodes', zorder=6,
-        )
-
-    junctions = getattr(model, 'junction_regions_', [])
-    endpoints = getattr(model, 'endpoint_regions_', [])
-    if junctions:
-        centers = np.asarray([region.center for region in junctions])
-        axis.scatter(
-            centers[:, 0], centers[:, 1], s=62, c='#111111',
-            marker='o', edgecolors='white', linewidths=0.8,
-            label='junctions', zorder=7,
-        )
-    if endpoints:
-        centers = np.asarray([region.center for region in endpoints])
-        axis.scatter(
-            centers[:, 0], centers[:, 1], s=62, facecolors='white',
-            edgecolors='#111111', linewidths=1.2, marker='o',
-            label='endpoints', zorder=7,
-        )
-
-    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=1.0, zorder=0)
-    axis.plot([], [], color='black', linewidth=2.5, label='backbone edges')
+    axis.scatter(points[:, 0], points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
     axis.plot([], [], color='#4c78a8', linewidth=2.2, label='fitted splines')
     axis.legend(loc='best', fontsize=7, frameon=False)
-    axis.text(
-        0.02, 0.98,
-        f'cycles: {model.realized_cycle_count_}/{model.requested_cycle_count_}\n'
-        f'landmark edges: {len(model.landmark_graph_.edges)}  |  '
-        f'skeleton splines: {len(model.splines_)}  |  ribs: {len(model.rib_paths_)}',
-        transform=axis.transAxes, va='top', fontsize=8,
-        bbox={'facecolor': 'white', 'alpha': 0.78, 'edgecolor': 'none', 'pad': 3},
-        zorder=8,
-    )
     _style_axis(axis, points)
 
 
@@ -294,9 +235,6 @@ def render_view(
         dataset_name, n_neighbors, mutual_knn, add_mst
     )
     fine_edges, _ = undirected_edges(graph)
-    centers, sizes, coarse_edges, support = coarsen_knn_graph(
-        points, graph, n_centroids
-    )
     spline_model = get_spline_embedding(
         dataset_name, n_centroids, n_neighbors, mutual_knn, add_mst,
         max_cycles, spline_smoothing, persistence_max_points,
@@ -335,43 +273,23 @@ def render_view(
     axes[0].set_title(f'{dataset_name}: {n_neighbors}-NN graph ({graph_description})')
     _style_axis(axes[0], points)
 
-    # Keep the original cloud faintly visible so the coarsening is easy to follow.
-    axes[1].scatter(
-        points[:, 0], points[:, 1],
-        s=7, c='#d9e6ed', alpha=0.48, linewidths=0, zorder=1,
-    )
-    if len(coarse_edges):
-        coarse_segments = centers[coarse_edges]
-        relative_support = support / max(float(support.max()), 1.0)
-        axes[1].add_collection(LineCollection(
-            coarse_segments,
-            colors='#356f8f',
-            linewidths=0.8 + 2.2 * relative_support,
-            alpha=0.82,
-            zorder=2,
-        ))
-    axes[1].scatter(
-        centers[:, 0], centers[:, 1],
-        s=24 + 90 * sizes / max(float(sizes.max()), 1.0),
-        c='#d95f59', edgecolors='#7f2d2a', linewidths=0.7,
-        alpha=0.95, zorder=3,
-    )
+    _plot_backbone(axes[1], points, spline_model)
     axes[1].set_title(
-        f'{dataset_name}: {len(centers)} coarsened centroids + edges ({graph_description})'
+        f'{dataset_name}: fitted backbone, '
+        f'{len(spline_model.backbone_graph_.nodes)} nodes, '
+        f'{len(spline_model.backbone_graph_.edges)} edges '
+        f'({spline_model.mip_status_})'
     )
     _style_axis(axes[1], points)
 
-    _plot_spline_pipeline(axes[2], points, spline_model, electrical_metric)
+    _plot_splines(axes[2], points, spline_model)
     axes[2].set_title(
-        f'{dataset_name}: topology + MIP backbone, '
-        f'{len(spline_model.backbone_graph_.nodes)} nodes, '
-        f'MIP {spline_model.mip_status_}, '
-        f'junction merge radius ({backbone_simplification:g}× local scale) + '
-        f'skeleton splines ({len(spline_model.rib_paths_)} ribs)'
+        f'{dataset_name}: fitted splines, {len(spline_model.splines_)} routes '
+        f'({len(spline_model.rib_paths_)} ribs)'
     )
 
     fig.suptitle(
-        'Observation graph → k-means contraction → skeleton network',
+        'Observation graph → fitted backbone → fitted splines',
         fontsize=15,
     )
     from IPython.display import display
@@ -382,7 +300,7 @@ def render_view(
 def display_interactive_controls(
     *, n_samples=500, noise=0.045, random_state=7,
 ):
-    """Display the focused kNN/coarsening viewer with SkeletalEmbedding controls."""
+    """Display the focused kNN/backbone viewer with SkeletalEmbedding controls."""
     global datasets, dataset_names, N_SAMPLES, RANDOM_STATE, knn_graph_cache, spline_model_cache
     import ipywidgets as widgets
     from IPython.display import display
@@ -406,13 +324,13 @@ def display_interactive_controls(
         max=96,
         step=4,
         continuous_update=False,
-        description='coarsened k-means',
+        description='embedding centroids',
         style={'description_width': 'initial'},
     )
     backbone_nodes_slider = widgets.IntSlider(
         value=0,
         min=0,
-        max=N_SAMPLES,
+        max=30,
         step=1,
         continuous_update=False,
         description='backbone nodes (0=auto)',

@@ -1,270 +1,445 @@
-# Skeletal embeddings for noisy point clouds
+# Topology-aware spline skeletons for noisy point clouds
 
 ## Abstract
 
-This work describes a spline-based representation for point clouds whose
-latent structure may contain graph-like branches, cycles, or higher-dimensional
-manifold regions. The method constructs a sparse neighborhood graph, estimates
-stable topology and local geometry, selects a topology-driven backbone, and
-fits smooth splines. Smooth tangent-orthogonal residual-PCA fields add local
-manifold coordinates. When those coordinates do not meet a coverage target,
-adaptive stable ribs form a sparse geometric wire frame.
+Many point clouds are not well described by a single line, plane, or generic
+low-dimensional coordinate system. Their latent structure may contain
+branches, junctions, loops, or several disconnected routes. This paper
+describes SkeletalEmbedding, a representation for such data based on a sparse
+graph of smooth spline routes.
 
-Fitting is performed in the original feature space, after an optional affine
-standardization. Dimensionality-reduction methods and the schematic layout
-are used only for visualization. The implementation exposes diagnostics for
-the distinction between the persistence-derived cycle target and the cycle
-rank realized by the selected graph, and records numerical fallbacks when
-optional backends are unavailable. Backend details and the complete software
-interface are documented separately in [Implementation details](implementation.md).
+The method separates two decisions that are often conflated. First, it
+infers a coarse graph topology from a weighted neighborhood graph, persistent
+one-dimensional topology, and local geometric evidence. Second, it fits smooth
+curves to the selected graph paths. A mixed-integer program can enforce
+connectivity, endpoint and junction degrees, and a requested cycle rank while
+choosing among candidate paths. Each observation is then projected to its
+nearest sampled route and represented by a route identity, a normalized
+longitudinal position, and an off-route residual. Optional tangent-orthogonal
+residual-PCA fields and adaptive ribs describe transverse variation when a
+one-dimensional centerline is not enough.
 
-## 1. Problem formulation
+The result is a topology-aware coordinate system for graph-shaped data. It is
+intended to make route structure explicit and to preserve off-route variation
+for downstream analysis. The primary object remains a one-dimensional graph
+skeleton; surface-like coverage and higher-dimensional structure are optional
+refinements rather than the default interpretation.
 
-Let
+## 1. Motivation and scope
+
+Dimensionality reduction is often introduced as a way to replace a cloud of
+points in a high-dimensional space with a small number of coordinates. That
+description is useful, but it can hide an important distinction between data
+sets. Some clouds are organized around a single smooth direction. Others are
+organized around a graph: observations travel along several paths, meet at
+junctions, separate again, or form closed loops.
+
+A two-dimensional display can show these structures, but a display alone does
+not define them. A generic projection may overlap unrelated branches, turn a
+loop into an open arc, or make an ordinary bend look like a junction. It also
+does not say which route an observation belongs to or how far the observation
+lies from the inferred structure.
+
+SkeletalEmbedding addresses this narrower problem by constructing an
+explicit geometric skeleton. The core object is a collection of smooth
+curves connected according to a sparse graph. The representation has three
+parts:
+
+- a discrete route identity for branch or loop membership;
+- a scalar position describing progress along that route; and
+- a residual describing the variation not explained by the route.
+
+This makes the method useful for data with trajectories, lineages,
+branching processes, road-like geometry, or other graph-shaped latent
+structure. The same representation can be used in two or more ambient
+dimensions because the graph is fitted in the input feature space after an
+optional featurewise standardization.
+
+The method is deliberately not presented as a replacement for general-purpose
+nonlinear embedding. It is not a probabilistic generative model, and its
+default output is not a learned surface or volume. It is a topology-aware
+one-dimensional representation with optional transverse structure. PCA, MDS,
+and UMAP may be used to display the fitted object, but they are not used to
+fit the backbone and do not redefine the learned coordinates.
+
+## 2. The representation
+
+Let the observations be $x_1,\ldots,x_n$ in $d$-dimensional feature space.
+The fitted backbone consists of routes
 
 $$
-X = \{x_1,\ldots,x_n\}, \qquad x_i\in\mathbb{R}^d,
+\Gamma = \{\gamma_r:[0,1]\rightarrow\mathbb{R}^d\}_{r=1}^{R}.
 $$
 
-be a finite set of observations. We assume that the observations are sampled
-near an unknown one-dimensional structure that may contain endpoints,
-junctions, open paths, and closed loops. The objective is to construct a
-compact route network that provides both intrinsic coordinates and an
-off-network error for each observation.
+For each observation, the estimator finds the closest route and the closest
+point along that route. In implementation this search is performed on a
+dense piecewise-linear sampling of the fitted curves. The resulting primary
+representation is
 
-Let $T$ denote the optional featurewise affine standardization used during
-fitting, and let $z_i=T(x_i)$. When standardization is disabled, $T$ is the
-identity. The fitted route network is
+```text
+(route_id, position, projected, residual, residual_norm)
+```
+
+where `route_id` identifies the selected route, `position` is normalized
+progress from the beginning to the end of an open route or around a closed
+route, `projected` is the nearest point on the fitted route, and
+`residual = x - projected` is the unexplained displacement from the
+centerline. `residual_norm` is its Euclidean magnitude.
+
+The position is a route parameter, not a physical distance. Two routes can
+therefore have the same position value without having the same length, and a
+position value should not be compared across routes as if all routes had the
+same metric scale. If physical progress is needed, the route arc length can
+be recovered from the sampled curve.
+
+The default representation is centerline-only. When a positive residual
+dimension is requested, the residual is decomposed into smooth local
+transverse coordinates and a remaining error:
 
 $$
-\tilde{\Gamma}=\{\tilde{\gamma}_r:[0,1]\rightarrow\mathbb{R}^d\}_{r=1}^{R}.
+x_i \approx \gamma_{r_i}(u_i) + U_{r_i}(u_i)z_i + \epsilon_i.
 $$
 
-where the curves are expressed in fitting coordinates. For each observation,
-the implementation approximates
+Here $U_r(u)$ is an orthonormal basis in the hyperplane normal to the route
+tangent, $z_i$ contains the learned residual-PCA coordinates, and
+$\epsilon_i$ is the post-PCA residual. This decomposition is optional. The
+compatibility fields `projected` and `residual` always refer to the
+centerline projection and centerline residual, even when the additional
+transverse reconstruction is enabled.
 
-$(r_i,u_i)\approx\arg\min_{r,u}\|z_i-\tilde{\gamma}_r(u)\|_2$.
+The coordinate systems are kept explicit. Distances and spline calculations
+use standardized fitting coordinates when standardization is enabled. Public
+`projected`, `residual`, `reconstructed`, and `unexplained_residual` arrays
+are returned in the original input units. Tangents and residual-PCA
+coordinates are retained in fitting coordinates because they define local
+directions and transverse geometry.
 
-The minimization is evaluated on a dense piecewise-linear representation of
-each route rather than by continuous optimization. Consequently, the route
-assignment and projection are approximate. The parameter $u_i\in[0,1]$ is a
-normalized route parameter; it represents progress along a route and is not a
-physical distance.
+## 3. Method overview
 
-## 2. Method
+The estimator follows a topology-aware coarse-to-fine pipeline:
 
-The method separates graph selection from route geometry. A sparse graph is
-used to identify connectivity, branches, and cycles. Smooth curves are then
-fitted to the selected graph paths. This separation allows the topology and
-the geometry to be inspected independently.
+1. **Prepare the metric.** Validate the point cloud and optionally center and
+   scale each feature. Constant features receive unit scale so degenerate
+   inputs remain finite.
+2. **Build the routing substrate.** Construct a weighted symmetric
+   observation kNN graph. Reciprocal-neighbor filtering and Euclidean-MST
+   augmentation are enabled by default. The graph is used for local routing,
+   not returned as the final skeleton.
+3. **Estimate topology and local geometry.** Use persistent H1 features as
+   evidence for cycles. Use multiscale annulus components to identify
+   endpoint and junction regions. Use local PCA to estimate ordinary tangents
+   and separate outgoing directions at junctions.
+4. **Generate candidate paths.** Compress observations into landmarks for
+   tractable selection, then generate ordered paths through the dense routing
+   graph between logical landmarks. Candidate paths are scored using length,
+   tangent consistency, density, and optional electrical or stability terms.
+5. **Select the backbone.** A mixed-integer program can choose candidate paths
+   subject to connectivity, degree, and cycle constraints. A deterministic
+   topology-aware selector is used when the MIP backend is unavailable or
+   cannot find a feasible solution.
+6. **Fit route geometry.** Collapse maximal degree-two graph paths into route
+   supports and fit smooth open or closed curves. Spline fitting is separate
+   from discrete graph selection.
+7. **Model transverse variation.** Optionally fit local tangent-orthogonal
+   residual-PCA fields. If the remaining reconstruction error is high,
+   candidate ribs can be added as a sparse coverage refinement.
+8. **Project observations.** Assign every observation to its closest sampled
+   route, returning route identity, normalized position, projection, tangent,
+   and residual fields.
 
-### 2.1 Metric preparation
+This ordering is the main design choice. Topology is selected before smooth
+geometry is fitted, so the spline stage is not asked to discover branches or
+loops by itself. Conversely, the selected graph remains inspectable before it
+is converted into curves.
 
-The estimator accepts finite, non-empty, two-dimensional numeric arrays. It
-rejects invalid shapes, non-finite values, incompatible feature counts, and
-invalid parameter values.
+## 4. Topology-aware backbone selection
 
-With standardization enabled, each feature is centered and scaled before
-distance, persistence, graph, and spline calculations. Constant features
-receive unit scale, which preserves finite coordinates for degenerate inputs.
-The inverse affine transform is retained so that public projections and
-residuals can be reported in the original feature units. A local scale is
-estimated from non-zero nearest-neighbor distances; a small finite floor is
-used when all observations are duplicated.
+### 4.1 Metric, neighborhoods, and landmarks
 
-### 2.2 Neighborhood graph and landmarks
+After optional standardization, the estimator builds a weighted observation
+kNN graph. Euclidean edge lengths provide geometric costs. Gaussian affinity
+weights are retained as conductances for optional connectivity diagnostics.
+With `mutual_knn=True`, an observation edge is retained only when both
+endpoints select each other. With `add_mst=True`, the exact Euclidean minimum
+spanning tree is added to preserve a connected routing substrate when local
+reciprocal neighborhoods are too sparse.
 
-The primary graph substrate is a symmetrized $k$-nearest-neighbor graph. Each
-observation is connected to nearby observations, and an edge is retained when
-the neighborhood relation is present in either direction. Edge lengths provide
-geometric costs. Affinity weights can additionally be interpreted as
-conductances for connectivity diagnostics.
+The MST is a routing safeguard, not an instruction that the final skeleton
+must be a tree. In particular, when persistent cycles are present, augmented
+MST edges are penalized during cycle-aware routing so that a natural local
+cycle is preferred when one is available. Disconnected natural components
+remain separate for route selection. A bridge may be introduced for optional
+electrical calculations, but that diagnostic bridge is not allowed to create a
+route between otherwise separate backbones.
 
-For larger datasets, observations are compressed into at most `n_centroids`
-landmarks using deterministic k-means with k-means++ initialization. The
-landmark graph is used for most topology-selection operations. Distance
-calculations are blocked so that the implementation does not materialize a
-full observation-by-landmark-by-feature tensor.
+For larger clouds, deterministic k-means compresses the observations into at
+most `n_centroids` landmarks. The dense observation graph continues to supply
+the ordered support paths, while the landmark representation keeps topology
+selection small enough to inspect and optimize. This distinction prevents
+landmark compression from replacing the observed geometry with a collection
+of straight centroid-to-centroid chords.
 
-The topology-aware scheme uses the neighborhood graph together with local
-geometry and topology diagnostics when selecting the backbone. A small MIP
-solves the connectivity, degree, and cycle constraints, with deterministic
-fallback when the solver cannot produce a feasible solution.
+### 4.2 Cycles and local branch structure
 
-### 2.3 Local geometry and topology
+Persistent homology estimates whether the cloud contains robust one-
+dimensional holes. Significant H1 bars provide a persistence-derived cycle
+count. The count is normalized by a local nearest-neighbor scale so that the
+threshold has a comparable interpretation across differently scaled data.
 
-Local principal component analysis (PCA) estimates unoriented tangent fields
-at ordinary graph vertices. At candidate junctions, separate outward
-directions are estimated for the individual arms. Candidate paths are rejected
-when their direction is inconsistent with these local estimates. Ordinary-edge
-tangent consistency is sign-invariant and uses $1-|u_i^T u_j|$.
+Persistent homology supplies evidence, not a complete graph reconstruction.
+The estimator therefore records three separate quantities:
 
-Branch structure is estimated from neighborhoods examined at several distance
-scales. Connected components in thin annular regions provide evidence for
-endpoints, regular points, and junctions. Nearby candidates are clustered into
-regions to reduce sensitivity to sampling noise.
+- `persistent_cycle_count_`: significant H1 bars before the user limit;
+- `requested_cycle_count_`: that count after applying `max_cycles`; and
+- `realized_cycle_count_`: the independent cycle rank of the selected graph.
 
-Loop structure is estimated with persistent homology. Persistent homology
-examines connectivity over a range of distance scales; its first homology
-group, $H_1$, records one-dimensional holes. Long-lived $H_1$ features are
-used as evidence for cycles. The resulting persistence estimate supplies a
-requested cycle count, but it does not guarantee that the selected graph will
-realize that count.
+Their difference is exposed as `topology_shortfall_`. A shortfall means that
+the available candidate paths could not realize the requested persistent
+topology; it is not silently reported as a successful fit.
 
-For a verified hypercube-like sample, geometric faces are reported separately
-from independent graph cycles. A three-dimensional cube therefore has eight
-degree-three junctions and six square faces, but its graph has cycle rank five
-because $E-V+1=12-8+1$. The estimator exposes the face count as
-`face_cycle_count_` and keeps `realized_cycle_count_` as the graph-theoretic
-rank.
+Branch structure is estimated independently of the cycle count. Neighborhoods
+are examined at several scales, and connected components in thin annuli around
+candidate centers provide evidence for endpoints, regular regions, and
+junctions. Nearby detections are clustered into endpoint and junction
+regions. At ordinary vertices, local PCA estimates an unoriented tangent. At
+junctions, local angular sectors estimate one outgoing direction per arm.
+Candidate paths that depart from a junction in an incompatible direction are
+rejected or penalized. Along ordinary edges, tangent inconsistency is
+sign-invariant, so reversing a route does not change its score.
 
-Optional electrical diagnostics use a conductance Laplacian to compute
-effective resistance, edge leverage, and aggregate current support. These
-quantities provide additional connectivity evidence; they do not define the
-topology, and their routing weights default to zero.
+### 4.3 Candidate paths and MIP selection
 
-### 2.4 Backbone selection
+The selector does not give the mixed-integer program every possible pair of
+observations. It first constructs a finite candidate set from shortest paths
+through the dense routing substrate, junction-arm completion, cycle-closing
+opportunities, and special structural handling for supported hypercube-like
+data. Each candidate is an ordered path between two logical landmarks and
+retains its point-level support.
 
-The selector constructs a low-cost connected landmark structure, completes
-missing junction arms, and considers local cycle-closing candidates. Candidate
-paths combine geometric length with tangent consistency, density, and optional
-connectivity terms. Locality constraints reject microscopic chords and
-shortcuts that do not close a sufficiently long path.
+For candidate path $c$, the routing cost combines normalized path length,
+tangent inconsistency, and inverse local density. Effective-resistance
+support, aggregate electrical-flow support, and stability support can adjust
+the ranking. Electrical terms are opt-in and have zero weight by default.
 
-The selected graph is simplified before route fitting. Maximal paths whose
+The MIP uses a binary variable `y_c` for each candidate path. A value of one
+means that the whole path is selected. It does not mean that an individual
+raw kNN edge, spline control point, or observation is selected. The main hard
+constraints are:
+
+1. Endpoint landmarks must have degree one.
+2. Junction landmarks must have their detected branch count.
+3. Cycle-anchor landmarks must have degree two.
+4. The selected path count must be compatible with the requested cycle rank.
+5. At most one alternative path may be selected for the same logical endpoint
+   pair.
+6. Tagged persistent cycle classes must receive supporting selected paths when
+   the candidate set contains those tags.
+
+Connectivity is enforced with continuous directed-flow variables. A root
+landmark sends one unit of flow to every other logical landmark, and the flow
+capacity on a candidate is tied to its binary selection variable. A collection
+of locally valid but disconnected paths therefore cannot satisfy the model.
+
+The objective is a weighted route-selection objective rather than a spline
+fitting objective:
+
+```text
+minimize  sum over candidates c of
+          y_c * (cost_c - 0.05 * electrical_c
+                       - 0.05 * current_c
+                       - 0.05 * stability_c)
+```
+
+When SciPy's MIP solver returns an optimal solution, that solution is optimal
+only over the generated candidate set. It does not discover a route that was
+never proposed by the dense-graph routing stage. If the solver is unavailable
+or infeasible, the deterministic selector preserves the same topology-aware
+intent and records the outcome in `mip_status_`.
+
+The selected graph is simplified after selection. Maximal paths whose
 internal vertices have degree two are collapsed into backbone edges while
-retaining their support points. The resulting `backbone_graph_` records the
-abstract connectivity, and `backbone_paths_` records the point-level supports
-used to fit routes.
+their ordered support points are retained. This produces an abstract
+`backbone_graph_` for topology and `backbone_paths_` for geometry. The
+backbone cycle rank is measured before optional coverage ribs are added.
 
-The implementation records both the persistence-derived target and the cycle
-rank of the selected graph. Their difference is exposed as a topology
-shortfall, rather than being hidden as a successful reconstruction.
+## 5. Smooth route geometry and projection
 
-### 2.5 Route fitting and projection
+Each selected support path becomes an open or closed route. For an open path,
+the first and last support points are preserved as endpoint anchors. For a
+closed path, the route is treated periodically so that the seam does not
+introduce a false endpoint. SciPy smoothing splines are preferred when the
+backend supports the route dimension and numerical fit. Shape-preserving
+periodic interpolation is used for closed routes when it avoids overshoot,
+and deterministic Catmull–Rom or polyline representations provide fallbacks
+for unsupported or difficult fits.
 
-Each backbone path is fitted as an open or closed route. Smoothing splines are
-preferred when the numerical backend supports them. A deterministic NumPy
-Catmull–Rom or polyline representation is used when spline fitting is
-unavailable or fails numerically.
+The spline stage has a different responsibility from the topology stage. Its
+smoothing parameter controls how closely the curve follows the selected
+support path. It does not add a branch because the data cloud appears wide,
+and it does not decide whether a loop should exist. A `backbone` control mode
+can give the selected landmark vertices stronger fitting weight when the
+route should remain close to the discrete backbone.
 
-The fitted routes are sampled densely. For each observation, squared distances
-to the sampled segments of every route are evaluated in batches. The closest
-valid route determines the route identifier, normalized position, and fitting-
-space projection. The projection is then mapped back to the original feature
-coordinates. If no valid route can be selected, the transformation raises an
-explicit error rather than returning a sentinel route identifier.
+Routes are sampled densely after fitting. For every observation, squared
+distances to the sampled line segments of every route are evaluated in
+batches. The closest valid route and segment determine `route_id`,
+`position`, and the fitting-space projection. The projection is mapped back
+to original feature units before it is returned. This makes the public
+residual an interpretable displacement in the units of the supplied data.
 
-## 3. Public embedding representation
+Projection is intentionally approximate. It uses sampled segments rather
+than continuous optimization over every spline parameter. The sampling
+resolution is therefore part of the numerical approximation, although the
+route identity and position are made deterministic for a fixed fitted model.
+If no valid route can be selected, transformation raises an explicit error
+rather than returning a sentinel route identifier.
 
-For an observation, the public result corresponds to
+## 6. Optional transverse structure and coverage
 
-$$
-(r_i,u_i,\hat{x}_i,e_i,\|e_i\|_2,v_i),
-$$
+### 6.1 Residual-PCA fields
 
-with the following field mapping:
+The centerline residual contains more information than a scalar distance. Its
+direction can indicate branch-specific variation, a local sheet around a
+trajectory, or measurement noise concentrated in particular directions.
 
-| Field | Mathematical meaning |
-| --- | --- |
-| `route_id` | Route index $r_i$ |
-| `position` | Normalized route parameter $u_i$ |
-| `projected` | Original-space projection $\hat{x}_i$ |
-| `residual` | $e_i=x_i-\hat{x}_i$ |
-| `residual_norm` | Euclidean norm $\|e_i\|_2$ |
-| `tangent` | Local unit tangent $v_i$ in fitting coordinates |
-| `residual_coordinates` | Learned transverse coordinates $z_i$ in fitting coordinates |
-| `reconstructed` | $\hat{x}_i + U_i z_i$ in original feature units |
-| `unexplained_residual` | $\epsilon_i=x_i-\mathrm{reconstructed}_i$ in original feature units |
-| `unexplained_residual_norm` | Euclidean norm of $\epsilon_i$ |
+When `max_residual_dim` is positive, residuals are expressed in deterministic
+normal frames along each route. At each route-grid position, a Gaussian-
+weighted covariance of the local residual coordinates is eigendecomposed.
+The leading directions form a local orthonormal residual basis. Neighboring
+subspaces can be smoothed by averaging their projectors and re-orthogonalizing
+against the route tangent.
 
-The coordinate distinction is intentional. The projection and residual are
-reported in the units of the input data, whereas the tangent is retained in
-fitting coordinates because it defines the local normal geometry used by the
-normal-coordinate transform.
+This gives a fixed-dimensional transverse coordinate system along a graph
+route. With zero residual dimensions, reconstruction equals the centerline
+projection and the unexplained residual equals the original centerline
+residual. The option therefore extends the representation without changing
+the meaning of its primary fields.
 
-When `max_residual_dim > 0`, the residual is further decomposed as
+### 6.2 Coverage ribs
 
-$$
-x_i \approx \hat{x}_i + U_{r_i}(u_i)z_i + \epsilon_i.
-$$
+Residual-PCA explains the most stable local transverse directions, but a
+single centerline plus a low-rank local basis may still leave coherent regions
+of high reconstruction error. Optional coverage refinement uses those regions
+to propose local ribs. A rib follows observed residual support through the
+routing graph and is fitted as an additional spline. Candidates are scored by
+reconstruction gain, support, length, and complexity penalties.
 
-The basis $U_r(u)$ is learned from Gaussian-weighted second moments of the
-standardized centerline residuals along each route. It is constrained to the
-normal hyperplane of the spline tangent and interpolated from a fixed route
-grid at transformation time. Neighboring projectors are optionally averaged
-for five passes with weight $\lambda/(1+\lambda)$; closed routes use cyclic
-neighbors and share their basis at the seam. The effective dimension is
-$\min(\texttt{max\_residual\_dim},d-1)$. With the default zero dimension, the
-new fields are backfilled so the decomposition reduces exactly to the legacy
-centerline projection and residual.
+Ribs are geometric coverage elements. They are not fed back into persistent
+topology inference, and they do not provide evidence that the underlying
+manifold has additional cycles. The default selection policy is greedy; an
+optional MIP can select a cardinality-limited set of ribs. This is deliberately
+different from backbone selection: the backbone encodes persistent coarse
+topology, whereas ribs reduce local reconstruction error.
 
-## 4. Deterministic normal coordinates
+The distinction matters for surface-like data. A torus, for example, is not
+faithfully represented by a single one-dimensional centerline. The backbone
+can still provide a useful route-oriented summary, while residual fields and
+ribs expose the limits of that summary and add sparse coverage where it is
+supported by observations. A true jointly learned two-dimensional manifold is
+outside the default model.
 
-At a route point, the tangent defines the along-route direction. Its
-orthogonal complement has dimension $d-1$ and provides local normal
-coordinates for the residual. The estimator constructs a deterministic
-orthonormal frame along each route rather than building a new frame for every
-query batch.
+## 7. Eight synthetic illustrations
 
-The frame is initialized against the coordinate axes, transported along a
-fixed route-parameter grid, and re-orthogonalized for numerical stability.
-Closed routes use a periodic parameter grid and reuse the first frame at the
-seam. This construction makes normal coordinates invariant to whether the
-full dataset or a subset is transformed, up to floating-point roundoff.
+The repository includes eight controlled point-cloud examples designed to
+show the range of structures addressed by the representation:
 
-The resulting array has shape `(n_samples, n_features - 1)`. In one feature
-dimension, it has zero columns.
+- a line;
+- a four-arm star;
+- a circle;
+- a figure-eight with two cycles sharing a junction;
+- a torus surface;
+- a branching binary tree;
+- a loop with an attached branch; and
+- a polygon with radial rays and attached circles.
 
-## 5. Visualization
+![Eight synthetic point clouds with fitted spline skeletons](figures/synthetic_eight_datasets.png)
 
-Visualization is downstream of fitting. PCA, MDS, and Uniform Manifold
-Approximation and Projection (UMAP) may be used to display high-dimensional
-observations and the fitted routes, but they do not change route assignments,
-projections, or residuals.
+**Figure 1.** Illustrative behavior of the topology-aware spline pipeline on
+eight noisy synthetic data sets. Each panel shows the observations and the
+fitted backbone in a two-dimensional display. The line, star, and
+loop-with-branch make open routes and junction markers easy to inspect. The
+circle and figure-eight illustrate closed routes and cycle rank, while the
+binary tree shows that a branching-shaped cloud can remain difficult for a
+sparse one-dimensional fit under the standard settings. The polygon/rays/
+circles example illustrates mixed graph structure. The torus and other
+surface-like examples mark the boundary of a one-dimensional backbone and
+motivate optional residual-PCA and coverage-rib refinement. The figure is a
+conceptual illustration, not a quantitative benchmark.
 
-The schematic layout converts graph connectivity, route arc length, junctions,
-and endpoint directions into a readable drawing. The interactive 3D skeleton
-view instead projects the fitted splines into the first three PCA components.
-At sampled normalized positions it estimates residual covariance in the tangent
-space orthogonal to each spline, draws its one-standard-deviation ellipse, and
-projects the ellipse into PCA space. These cross-sections form thick bones
-around the extracted data skeleton. Neither display is a metric embedding of
-the original data or a change to the fitted route assignments.
+The figure is generated with 500 observations per data set, noise scale
+0.045, a fixed random seed, 32 landmarks for ordinary examples, and 64
+landmarks for the binary tree. These settings are inherited from the
+repository demo so that the illustration is tied to a reproducible workflow.
+The panels are displays of fits made in the ambient fitting space; the
+display itself does not replace the learned route coordinates.
 
-## 6. Computational considerations
+## 8. Relation to principal graphs and manifolds
 
-Landmark compression reduces the graph on which topology selection operates.
-Blocked distance calculations avoid materializing a global
-observation-landmark-feature tensor, and route projection is batched over
-observations and route samples. The persistence fallback is intended for
-moderate point clouds and can be capped with `persistence_max_points`.
+SkeletalEmbedding belongs to the broader family of principal-object methods,
+which approximate a data set by an object of lower dimension or complexity
+and project observations onto that object. It is especially close in spirit
+to principal curves, elastic maps, and elastic principal graphs.
 
-The synthetic notebook keeps its six easy examples at cap `60` and isolates
-the higher-detail polygon/hypercube demonstrations in a separate cell at cap
-`300` with normalized H1 threshold `4.0`; electrical resistance/current
-support remains disabled by default. The NumPy persistence fallback uses a
-smaller internal cap because its full Rips 2-skeleton is cubic.
+The conceptual difference is where topology enters the procedure. In
+elastic-principal-graph approaches, a graph is embedded by minimizing a data
+approximation term together with stretching and bending energies. Graph
+grammars can grow, split, prune, or otherwise modify the structure under
+explicit complexity limits. Junctions are regularized toward ideal or
+pluriharmonic configurations, and EM-style projection and re-estimation
+updates the embedded graph.
 
-The method has several approximation sources: landmark compression, sparse
-neighborhood construction, sampled route projection, and the persistence
-fallback. The topology shortfall diagnostic identifies one important failure
-mode: the persistence-derived cycle target was not realized by the available
-local candidates.
+The present method uses a topology-first decomposition. Persistent H1
+provides cycle evidence, local annulus analysis provides branch evidence, and
+the routing substrate supplies candidate paths. A MIP or deterministic
+selector then chooses a graph satisfying discrete connectivity, degree, and
+cycle constraints. Smooth splines are fitted after that choice. There is no
+single elastic energy jointly optimized over all candidate topologies and
+spline coordinates.
 
-## 7. Reproducibility and limitations
+This difference affects the interpretation of the output. The method here is
+designed around explicit route identity, normalized longitudinal position,
+and residual displacement. Elastic maps and related principal objects provide
+a broader framework for controlled-complexity approximation, including
+regular-grid manifolds and factorized higher-dimensional complexes. Those
+objects are useful points of comparison, but the current implementation keeps
+its primary claim narrower: it extracts and parameterizes a sparse graph
+skeleton, with optional transverse coverage.
+
+## 9. Limitations and reproducibility
+
+The fitted structure is an approximation whose behavior depends on several
+scales and thresholds. The main approximation sources are feature
+standardization, sparse neighborhood construction, landmark compression,
+candidate-path generation, persistent-homology estimation, sampled spline
+projection, and optional backend fallbacks. The persistence fallback is
+intended for moderate point clouds and may subsample or cap the data.
+
+Persistent topology is evidence rather than certainty. Short noisy H1 bars
+may be rejected, while a genuine cycle may be absent from the available
+candidate routes. The estimator reports this distinction through persistence,
+requested, realized, and shortfall diagnostics. Likewise, local annulus votes
+and tangent estimates can be ambiguous near crossings, sparse endpoints, or
+strongly anisotropic noise.
+
+The backbone and ribs also have different meanings. The backbone is the
+topology-constrained representation of the dominant graph-like structure.
+Ribs are optional geometric refinements chosen to improve coverage. Adding
+ribs should not be interpreted as discovering new topological cycles.
 
 Randomized stages accept `random_state`, including landmark initialization and
-subsampling for capped persistence. Numerical outputs may depend on installed
-SciPy or Ripser versions when optional backends are available; the selected
-backend is recorded by the fitted estimator.
+capped persistence subsampling. The fitted estimator records persistence and
+spline backends, solver status, cycle diagnostics, route metadata, and
+coverage decisions. The complete parameter-level behavior and diagnostic
+attributes are documented in [Implementation details](implementation.md).
 
-The backbone targets persistent coarse topology; the rib-filled skeleton is a
-geometric coverage approximation and need not have the same cycle rank as the
-underlying manifold. Projection is not a full continuous optimization, and the
-inferred structure is controlled by graph construction, local geometric
-thresholds, persistence, coverage penalties, and stability settings. These
-parameters should therefore be reported with empirical results.
+## 10. References
 
-The complete API, diagnostic attributes, backend behavior, and usage examples
-are maintained in [Implementation details](implementation.md).
+1. Gorban, A. N., and Zinovyev, A. Y. *Principal Graphs and Manifolds*.
+   Supplied chapter on principal objects, elastic maps, elastic principal
+   graphs, graph grammars, and principal trees.
+2. Pearson, K. “On Lines and Planes of Closest Fit to Systems of Points in
+   Space.” *Philosophical Magazine*, 1901.
+3. Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*.
+   American Mathematical Society, 2010.
+4. Dierckx, P. *Curve and Surface Fitting with Splines*. Oxford University
+   Press, 1993.

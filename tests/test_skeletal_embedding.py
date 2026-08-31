@@ -159,6 +159,26 @@ def test_strict_coverage_adds_ribs_and_improves_error():
     assert refined.coverage_history_
 
 
+def test_stability_selection_uses_default_runs_for_coverage_ribs():
+    points = _plane(seed=6)
+    model = SkeletalEmbedding(
+        n_centroids=10,
+        n_neighbors=6,
+        max_residual_dim=0,
+        coverage_refinement=True,
+        coverage_error_tolerance=0.05,
+        coverage_max_iterations=2,
+        coverage_max_candidates_per_iteration=3,
+        stability_selection=True,
+        stability_runs=2,
+        rib_stability_runs=None,
+        random_state=2,
+    ).fit(points)
+
+    assert len(model.rib_paths_) > 0
+    assert model.stability_summary_["runs"] == 2
+
+
 def test_sklearn_adapter_exposes_new_parameters():
     transformer = SkeletalEmbeddingTransformer(
         n_neighbors=6,

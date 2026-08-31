@@ -2771,10 +2771,10 @@ class SkeletalEmbedding:
         reference_endpoints = list(getattr(self, "endpoints_", []))
         reference_routes = [spline.samples for spline in self.routes_[:backbone_count]]
         reference_ribs = [spline.samples for spline in self.routes_[backbone_count:]]
-        run_count = int(max(
-            self.stability_runs,
-            self.rib_stability_runs if reference_ribs else self.stability_runs,
-        ))
+        run_count = self.stability_runs
+        if reference_ribs and self.rib_stability_runs is not None:
+            run_count = max(run_count, self.rib_stability_runs)
+        run_count = int(run_count)
         tolerance = 8.0 * max(float(self.local_scale_), 1e-8)
 
         for run in range(run_count):
