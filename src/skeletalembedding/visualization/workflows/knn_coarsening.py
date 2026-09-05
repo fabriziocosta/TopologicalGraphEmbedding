@@ -158,7 +158,7 @@ def get_spline_embedding(
     electrical_metric, electrical_weight, max_residual_dim,
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
-    backbone_simplification, n_backbone_nodes,
+    backbone_simplification, n_backbone_nodes, junction_confidence=0.7,
 ):
     """Fit and cache the downstream topology + MIP pipeline."""
     key = (
@@ -172,6 +172,7 @@ def get_spline_embedding(
         int(stability_runs), float(stability_fraction),
         float(backbone_simplification),
         None if n_backbone_nodes is None else int(n_backbone_nodes),
+        float(junction_confidence),
     )
     if key not in spline_model_cache:
         use_resistance = electrical_metric in {'effective resistance', 'edge leverage'}
@@ -191,6 +192,7 @@ def get_spline_embedding(
             merge_junction_distance=(
                 float(backbone_simplification) * _local_scale(datasets[dataset_name])
             ),
+            junction_confidence=float(junction_confidence),
             random_state=RANDOM_STATE,
             standardize=False,
             persistence_max_points=int(persistence_max_points),
@@ -258,19 +260,29 @@ def _plot_splines(axis, points, model, project):
     """Draw the observations faintly with fitted splines, without graph edges."""
     display_points = project(points)
     spline_colors = plt.get_cmap('tab10', max(1, len(model.splines_)))
+    backbone_count = int(
+        getattr(model, 'backbone_element_count_', len(model.splines_))
+    )
     for route_id, spline in enumerate(model.splines_):
         samples = project(np.asarray(spline.samples, dtype=float))
         if len(samples) == 0:
             continue
         if spline.closed:
             samples = np.vstack([samples, samples[0]])
+        is_rib = route_id >= backbone_count
         axis.plot(
             samples[:, 0], samples[:, 1], color=spline_colors(route_id),
-            linewidth=2.2, alpha=0.92, zorder=4,
+            linewidth=0.5 if is_rib else 3.0, alpha=0.92, zorder=4,
+            linestyle='-',
         )
 
     axis.scatter(display_points[:, 0], display_points[:, 1], s=5, c='#a9cbe0', alpha=0.65, zorder=0)
-    axis.plot([], [], color='#4c78a8', linewidth=2.2, label='fitted splines')
+    axis.plot([], [], color='#4c78a8', linewidth=3.0, label='backbone splines')
+    if backbone_count < len(model.splines_):
+        axis.plot(
+            [], [], color='#4c78a8', linewidth=0.5,
+            label='coverage ribs',
+        )
     axis.legend(loc='best', fontsize=7, frameon=False)
     _style_axis(axis, display_points)
 
@@ -282,6 +294,7 @@ def render_view(
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
     backbone_simplification, n_backbone_nodes, num_points_fraction=1.0,
+    junction_confidence=0.7,
 ):
     _set_dataset_size(num_points_fraction)
     points = datasets[dataset_name]
@@ -298,6 +311,7 @@ def render_view(
         coverage_refinement, coverage_tolerance, coverage_max_iterations,
         stability_selection, stability_runs, stability_fraction,
         backbone_simplification, n_backbone_nodes,
+        junction_confidence,
     )
 
     fig, axes = plt.subplots(1, 3, figsize=(21, 6), constrained_layout=True)
@@ -326,22 +340,28 @@ def render_view(
         ))
         axes[0].plot([], [], color='#d95f59', linewidth=1.4, label='MST edges')
     axes[0].legend(loc='best', fontsize=8, frameon=False)
-    axes[0].set_title(f'{dataset_name}: {n_neighbors}-NN graph ({graph_description})')
+    axes[0].set_title(
+        f'{dataset_name}: {n_neighbors}-NN graph\n'
+        f'({graph_description})',
+        pad=10,
+    )
     _style_axis(axes[0], display_points)
 
     _plot_backbone(axes[1], points, spline_model, project)
+    mip_status = str(spline_model.mip_status_).split(':', 1)[0]
     axes[1].set_title(
-        f'{dataset_name}: fitted backbone, '
+        f'{dataset_name}: fitted backbone\n'
         f'{len(spline_model.backbone_graph_.nodes)} nodes, '
-        f'{len(spline_model.backbone_graph_.edges)} edges '
-        f'({spline_model.mip_status_})'
+        f'{len(spline_model.backbone_graph_.edges)} edges ({mip_status})',
+        pad=10,
     )
     _style_axis(axes[1], display_points)
 
     _plot_splines(axes[2], points, spline_model, project)
     axes[2].set_title(
-        f'{dataset_name}: fitted splines, {len(spline_model.splines_)} routes '
-        f'({len(spline_model.rib_paths_)} ribs)'
+        f'{dataset_name}: fitted splines\n'
+        f'{len(spline_model.splines_)} routes ({len(spline_model.rib_paths_)} ribs)',
+        pad=10,
     )
 
     fig.suptitle(
@@ -412,6 +432,16 @@ def display_interactive_controls(
         readout_format='.1f',
         continuous_update=False,
         description='junction merge radius',
+        style={'description_width': 'initial'},
+    )
+    junction_confidence_slider = widgets.FloatSlider(
+        value=0.7,
+        min=0.3,
+        max=0.95,
+        step=0.05,
+        readout_format='.2f',
+        continuous_update=False,
+        description='branch sensitivity (lower = more)',
         style={'description_width': 'initial'},
     )
     max_cycles_slider = widgets.IntSlider(
@@ -550,12 +580,28 @@ def display_interactive_controls(
         layout=widgets.Layout(min_width='180px'),
     )
 
+    # Keep each control wide enough for its description and slider.  Without
+    # a fixed flex basis, long labels can shrink the slider to a tiny stub.
+    for control in (
+        dataset_selector, point_fraction_slider, knn_slider, mutual_switch,
+        mst_switch, centroid_slider, backbone_nodes_slider,
+        backbone_simplification_slider, junction_confidence_slider,
+        max_cycles_slider, persistence_cap_slider, spline_smoothing_slider,
+        electrical_metric_selector, electrical_weight_slider,
+        max_residual_dim_slider, coverage_switch, coverage_tolerance_slider,
+        coverage_iterations_slider, stability_switch, stability_runs_slider,
+        stability_fraction_slider,
+    ):
+        control.layout = widgets.Layout(width='500px', flex='0 0 500px')
+    render_status.layout = widgets.Layout(width='280px', flex='0 0 280px')
+
     controls = widgets.HBox(
         [
             dataset_selector, point_fraction_slider, knn_slider, mutual_switch,
             mst_switch, centroid_slider,
             backbone_nodes_slider,
             backbone_simplification_slider,
+            junction_confidence_slider,
             max_cycles_slider, persistence_cap_slider, spline_smoothing_slider,
             electrical_metric_selector, electrical_weight_slider,
             max_residual_dim_slider, coverage_switch, coverage_tolerance_slider,
@@ -563,7 +609,9 @@ def display_interactive_controls(
             stability_fraction_slider,
             render_status,
         ],
-        layout=widgets.Layout(display='flex', flex_flow='row wrap', gap='18px'),
+        layout=widgets.Layout(
+            display='flex', flex_flow='row wrap', gap='18px', width='100%',
+        ),
     )
 
     def render_with_status(**kwargs):
@@ -582,32 +630,47 @@ def display_interactive_controls(
             f'<span style="color:#2e7d32">● Ready · {point_count:,} points</span>'
         )
 
-    output = widgets.interactive_output(
-        render_with_status,
-        {
-            'dataset_name': dataset_selector,
-            'num_points_fraction': point_fraction_slider,
-            'n_centroids': centroid_slider,
-            'n_backbone_nodes': backbone_nodes_slider,
-            'n_neighbors': knn_slider,
-            'mutual_knn': mutual_switch,
-            'add_mst': mst_switch,
-            'backbone_simplification': backbone_simplification_slider,
-            'max_cycles': max_cycles_slider,
-            'spline_smoothing': spline_smoothing_slider,
-            'persistence_max_points': persistence_cap_slider,
-            'electrical_metric': electrical_metric_selector,
-            'electrical_weight': electrical_weight_slider,
-            'max_residual_dim': max_residual_dim_slider,
-            'coverage_refinement': coverage_switch,
-            'coverage_tolerance': coverage_tolerance_slider,
-            'coverage_max_iterations': coverage_iterations_slider,
-            'stability_selection': stability_switch,
-            'stability_runs': stability_runs_slider,
-            'stability_fraction': stability_fraction_slider,
-        },
-    )
-    display(controls, output)
+    control_map = {
+        'dataset_name': dataset_selector,
+        'num_points_fraction': point_fraction_slider,
+        'n_centroids': centroid_slider,
+        'n_backbone_nodes': backbone_nodes_slider,
+        'n_neighbors': knn_slider,
+        'mutual_knn': mutual_switch,
+        'add_mst': mst_switch,
+        'backbone_simplification': backbone_simplification_slider,
+        'junction_confidence': junction_confidence_slider,
+        'max_cycles': max_cycles_slider,
+        'spline_smoothing': spline_smoothing_slider,
+        'persistence_max_points': persistence_cap_slider,
+        'electrical_metric': electrical_metric_selector,
+        'electrical_weight': electrical_weight_slider,
+        'max_residual_dim': max_residual_dim_slider,
+        'coverage_refinement': coverage_switch,
+        'coverage_tolerance': coverage_tolerance_slider,
+        'coverage_max_iterations': coverage_iterations_slider,
+        'stability_selection': stability_switch,
+        'stability_runs': stability_runs_slider,
+        'stability_fraction': stability_fraction_slider,
+    }
+    output = widgets.Output()
+
+    def render_from_controls(_change=None):
+        kwargs = {
+            name: control.value for name, control in control_map.items()
+        }
+        output.clear_output(wait=True)
+        with output:
+            render_with_status(**kwargs)
+
+    for control in control_map.values():
+        control.observe(render_from_controls, names='value')
+
+    # Display before starting the initial fit so the status indicator is
+    # visible during expensive first renders.
+    container = widgets.VBox([controls, output])
+    display(container)
+    render_from_controls()
 
 
 __all__ = [

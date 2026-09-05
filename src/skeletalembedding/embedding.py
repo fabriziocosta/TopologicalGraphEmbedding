@@ -900,7 +900,21 @@ class SkeletalEmbedding:
             closed_multi_junction = (
                 self.requested_cycle_count_ > 0 and len(junctions) >= 2
             )
-            desired_endpoints = 0 if closed_multi_junction else max(
+            closed_high_order_junction = (
+                self.requested_cycle_count_ > 0
+                and len(junctions) == 1
+                and junctions[0].branch_count >= 4
+                and self.persistent_cycle_count_ >= 1
+            )
+            if closed_high_order_junction:
+                # A high-order junction on a cyclic graph is a crossing or
+                # cycle attachment, not evidence of terminal branches.  In
+                # this case the annulus endpoint votes are artificial leaves
+                # created by the sparse routing approximation.
+                endpoints = []
+            desired_endpoints = 0 if (
+                closed_multi_junction or closed_high_order_junction
+            ) else max(
                 0,
                 2
                 + sum(max(0, region.branch_count - 2) for region in junctions)
