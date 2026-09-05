@@ -23,9 +23,16 @@ from ._local_geometry import (
     _estimate_local_tangents,
     _tangent_inconsistency,
 )
+from ._multiresolution import (
+    finish_hierarchy_diagnostics,
+    infer_hierarchy_topology,
+    initialize_hierarchy,
+    refine_backbone,
+    validate_hierarchy_parameters,
+)
 from ._optimization import select_backbone_mip
 from ._residual_pca import attach_residual_pca, fit_residual_pca
-from ._ribs import propose_ribs, select_ribs
+from ._ribs import prepare_rib_candidates, propose_ribs, select_ribs
 from ._stability import (
     jitter_points,
     match_cycles,
@@ -170,6 +177,19 @@ class SkeletalEmbedding:
         rib_stability_runs: int | None = None,
         rib_min_support: float = 0.6,
         stability_residual_subspaces: bool = False,
+        use_multiresolution = True,
+        hierarchy_max_levels = 8,
+        hierarchy_target_size = 1000,
+        hierarchy_min_reduction = 0.15,
+        representative_method = "medoid",
+        hierarchy_distance_quantile = 0.1,
+        hierarchy_local_neighbors = 10,
+        backbone_level: int | str = "auto",
+        backbone_max_representatives = 2000,
+        backbone_consensus_levels = 3,
+        route_resolution_weight = 0.1,
+        rib_resolution_weight = 0.1,
+        rib_seed_source = "both",
         n_jobs: int | None = None,
     ) -> None:
         if n_centroids < 3:
@@ -351,10 +371,29 @@ class SkeletalEmbedding:
         self.rib_stability_runs = rib_stability_runs
         self.rib_min_support = float(rib_min_support)
         self.stability_residual_subspaces = bool(stability_residual_subspaces)
+        self.use_multiresolution = use_multiresolution
+        self.hierarchy_max_levels = hierarchy_max_levels
+        self.hierarchy_target_size = hierarchy_target_size
+        self.hierarchy_min_reduction = hierarchy_min_reduction
+        self.representative_method = representative_method
+        self.hierarchy_distance_quantile = hierarchy_distance_quantile
+        self.hierarchy_local_neighbors = hierarchy_local_neighbors
+        self.backbone_level = backbone_level
+        self.backbone_max_representatives = backbone_max_representatives
+        self.backbone_consensus_levels = backbone_consensus_levels
+        self.route_resolution_weight = route_resolution_weight
+        self.rib_resolution_weight = rib_resolution_weight
+        self.rib_seed_source = rib_seed_source
         self.n_jobs = n_jobs
+        validate_hierarchy_parameters(self)
         self._fitted = False
 
     def fit(self, X: Array | Sequence[Sequence[float]]) -> SkeletalEmbedding:
+        # A repeated fit must never reuse fitted graph or rib state.
+        for name in list(vars(self)):
+            if name.endswith("_"):
+                delattr(self, name)
+        self.topology_neighbors_ = self.topology_neighbors or self.n_neighbors
         original = _as_point_cloud(X)
         if original.shape[0] < 3:
             raise ValueError(
@@ -373,10 +412,14 @@ class SkeletalEmbedding:
         self.scale_ = scale
         self._original_X_ = original
 
+        initialize_hierarchy(self, points)
+        infer_hierarchy_topology(self)
+        structure_points = self.levels_[self.selected_backbone_level_].points
+        self.backbone_input_size_ = len(structure_points)
         self.persistence_diagram_, self.persistence_backend_ = _estimate_persistence(
-            points, max_points=self.persistence_max_points, random_state=self.random_state
+            structure_points, max_points=self.persistence_max_points, random_state=self.random_state
         )
-        self.local_scale_ = _local_scale(points)
+        self.local_scale_ = _local_scale(structure_points)
         self.normalized_persistence_diagram_ = _normalize_persistence_diagram(
             self.persistence_diagram_, self.local_scale_
         )
@@ -403,13 +446,15 @@ class SkeletalEmbedding:
                 & ((np.asarray(diagram, dtype=float)[:, 1] - np.asarray(diagram, dtype=float)[:, 0]) >= self.persistence_threshold_)
             ]
         ]
+        if len(self.levels_) > 1:
+            self.persistent_cycles_ = sorted(self.persistent_cycles_, key=lambda cycle: -cycle.persistence)[:self.max_cycles]
         self.cycle_support_ = np.ones(len(self.persistent_cycles_), dtype=float)
         self.cycle_count_ = self.persistent_cycle_count_
         self.requested_cycle_count_ = min(self.max_cycles, self.persistent_cycle_count_)
         if not self.detect_cycles:
             self.requested_cycle_count_ = 0
 
-        self.centroids_ = _kmeans(points, self.n_centroids, self.random_state)
+        self.centroids_ = _kmeans(structure_points, self.n_centroids, self.random_state)
         # Structure detection is evaluated in the original metric.  This is
         # important for noisy one-dimensional clouds: feature standardization
         # can otherwise turn small orthogonal noise into an artificial branch.
@@ -440,9 +485,19 @@ class SkeletalEmbedding:
         self.central_junction_center_ = None
         self.face_cycle_count_ = 0
         self.hypercube_dimension_ = None
-        graph, backbone_paths = self._topological_backbone(points, self.centroids_)
+        from ._stability import prepare_structural_subsamples
+        prepare_structural_subsamples(self, points)
+        if len(self.levels_) > 1:
+            from ._stability import structural_feature_evidence
+            evidence = self.topology_by_level_.get(self.selected_backbone_level_, {})
+            for cycle, detected in zip(self.persistent_cycles_, evidence.get("persistent_cycles", [])):
+                cycle.representative = detected.representative
+            stable_cycles = structural_feature_evidence(self, cycles=self.persistent_cycles_)
+            self.requested_cycle_count_ = min(self.requested_cycle_count_, len(stable_cycles))
+        graph, backbone_paths = self._topological_backbone(structure_points, self.centroids_)
+        refine_backbone(self, graph, backbone_paths)
         graph, backbone_paths = self._resize_skeletal_backbone(
-            graph, backbone_paths, points
+            graph, backbone_paths, structure_points
         )
         self.backbone_paths_ = backbone_paths
         self.merge_junction_distance_ = 0.0
@@ -496,6 +551,8 @@ class SkeletalEmbedding:
             if nodes:
                 self.route_chains_ = [{"nodes": [nodes[0]], "closed": False}]
         for chain in self.route_chains_:
+            if self.selected_backbone_level_ > 0:
+                chain["preserve_support_order"] = True
             if self.backbone_paths_ is None:
                 chain["points"] = np.asarray([self.landmark_graph_.nodes[node] for node in chain["nodes"]])
             else:
@@ -569,6 +626,7 @@ class SkeletalEmbedding:
         self._initialize_skeleton_metadata()
         self._run_stability_selection(original)
         self._fit_final_diagnostics(original, points)
+        finish_hierarchy_diagnostics(self)
         self._fitted = True
         return self
 
@@ -576,6 +634,8 @@ class SkeletalEmbedding:
         self,
         points: Array,
         centroids: Array,
+        *,
+        topology_only: bool = False,
     ) -> tuple[_LandmarkGraph, dict[tuple[int, int], CandidatePath]]:
         """Infer a constrained landmark graph from the dense routing substrate."""
         routing_graph, local_scales = _weighted_symmetric_knn_graph(
@@ -1031,7 +1091,24 @@ class SkeletalEmbedding:
             # promote it to skeletal topology.
             junctions = []
             endpoints = []
+        if self.use_multiresolution and (len(self.levels_) > 1 or getattr(self, "_evaluating_hierarchy_", False)):
+            # Compression must not turn an empty region into an intrinsic
+            # junction merely because nearest-neighbor spacing increased.
+            junctions = [region for region in junctions
+                         if np.min(np.linalg.norm(points - region.center, axis=1)) <= self.local_scale_]
+            if not junctions:
+                central_junction_locked = False
+                self.central_junction_locked_ = False
+                self.central_junction_center_ = None
+                loop_branch_endpoint_center = None
+                if self.requested_cycle_count_ > 0:
+                    endpoints = []
+            if hypercube_junctions_detected and len(junctions) != 2 ** int(self.hypercube_dimension_ or 0):
+                hypercube_junctions_detected = False
         self.loop_branch_endpoint_center_ = loop_branch_endpoint_center
+        if len(self.levels_) > 1:
+            from ._stability import structural_feature_evidence
+            junctions = structural_feature_evidence(self, junctions=junctions)
         self.junction_regions_ = junctions
         self.endpoint_regions_ = endpoints
         self.junctions_ = junctions
@@ -1039,6 +1116,9 @@ class SkeletalEmbedding:
         self.branch_counts_ = branch_counts
         self.branch_confidence_ = branch_confidence
         self.topology_confidence_ = branch_confidence.copy()
+
+        if topology_only:
+            return None, None
 
         # Build compact logical landmarks while retaining their original graph
         # vertices for routing and electrical calculations.
@@ -1145,6 +1225,16 @@ class SkeletalEmbedding:
             ):
                 continue
             append_spec("cycle_anchor", points[vertex], vertex=vertex)
+
+        self.cycle_connector_node_ids_ = []
+        if (len(self.levels_) > 1 and cycle_target > 1 and not junctions and not endpoints
+                and len(routing_components) == 1 and len(specifications) >= 2 * cycle_target + 1):
+            # Multiple surface cycles need a shared skeletal connector even
+            # when the sampled manifold has no intrinsic branch junction.
+            # Leave its degree to the existing connectivity / cycle-rank MIP
+            # constraints; do not mislabel it as a detected junction.
+            specifications[0]["kind"] = "cycle_connector"
+            self.cycle_connector_node_ids_ = [0]
 
         if not specifications and len(points):
             first = int(np.argmin(np.sum((points - np.mean(points, axis=0)) ** 2, axis=1)))
@@ -1861,6 +1951,9 @@ class SkeletalEmbedding:
             if self.requested_cycle_count_ > 0
             else 0
         )
+        from ._stability import score_multiresolution_candidates
+        score_multiresolution_candidates(self, candidates, specifications)
+        self.mip_candidate_count_ = len(candidates)
         mip_selected, mip_status = select_backbone_mip(
             candidates,
             specifications,
@@ -2002,6 +2095,10 @@ class SkeletalEmbedding:
             persistent_cycle_classes=tuple(template.persistent_cycle_classes),
             stability_support=float(template.stability_support),
             support_points=np.asarray(support, dtype=float).copy(),
+            subsample_support=template.subsample_support,
+            resolution_support=template.resolution_support,
+            geometry_cost=template.geometry_cost,
+            descendant_original_indices=template.descendant_original_indices,
         )
 
     def _contract_backbone_node(
@@ -2358,7 +2455,12 @@ class SkeletalEmbedding:
         component = np.asarray(self.routing_components_[component_id], dtype=int)
         if len(component) < 3:
             return None
-        points = np.asarray(self.routing_graph_.points[component], dtype=float)
+        if self.selected_backbone_level_ > 0:
+            level = self.levels_[self.selected_backbone_level_]
+            original_ids = np.unique(np.concatenate([level.descendant_indices[i] for i in component]))
+            points = self.levels_[0].points[original_ids]
+        else:
+            points = np.asarray(self.routing_graph_.points[component], dtype=float)
         centered = points - np.mean(points, axis=0, keepdims=True)
         if points.shape[1] < 2:
             return None
@@ -2419,6 +2521,9 @@ class SkeletalEmbedding:
         component = self.routing_components_[component_id]
         if len(component) < 8:
             return chain["points"]
+        if self.selected_backbone_level_ > 0:
+            level = self.levels_[self.selected_backbone_level_]
+            component = np.unique(np.concatenate([level.descendant_indices[i] for i in component]))
         component_points = np.asarray(points[component], dtype=float)
         center = np.mean(component_points, axis=0)
         angles = np.arctan2(
@@ -2643,13 +2748,14 @@ class SkeletalEmbedding:
                 and len(self.rib_paths_) >= self.coverage_max_ribs
             ):
                 break
-            candidates = propose_ribs(
+            candidates = [] if self.rib_seed_source == "hierarchy" else propose_ribs(
                 self,
                 points,
                 result,
                 max_candidates=self.coverage_max_candidates_per_iteration,
                 candidate_type=self.rib_candidate_type,
             )
+            candidates = prepare_rib_candidates(self, points, result, candidates)
             if self.coverage_min_error is not None:
                 candidates = [
                     candidate for candidate in candidates
@@ -2667,6 +2773,7 @@ class SkeletalEmbedding:
                 rib_penalty=self.coverage_rib_penalty,
                 junction_penalty=self.coverage_junction_penalty,
                 selection=self.coverage_selection,
+                resolution_weight=self.rib_resolution_weight,
             )
             if not selected:
                 break
@@ -2683,6 +2790,7 @@ class SkeletalEmbedding:
                 self.rib_paths_.append(candidate.points.copy())
                 self.rib_support_.append(float(candidate.support))
                 self.rib_stability_.append(float(candidate.stability))
+                self.rib_resolution_support_.append(float(candidate.resolution_support))
                 start_id = max(
                     [*self.backbone_graph_.nodes, *self.rib_graph_.nodes, -1]
                 ) + 1
@@ -2861,6 +2969,19 @@ class SkeletalEmbedding:
                     coverage_junction_penalty=self.coverage_junction_penalty,
                     coverage_selection=self.coverage_selection,
                     rib_candidate_type=self.rib_candidate_type,
+                    use_multiresolution=self.use_multiresolution,
+                    hierarchy_max_levels=self.hierarchy_max_levels,
+                    hierarchy_target_size=self.hierarchy_target_size,
+                    hierarchy_min_reduction=self.hierarchy_min_reduction,
+                    representative_method=self.representative_method,
+                    hierarchy_distance_quantile=self.hierarchy_distance_quantile,
+                    hierarchy_local_neighbors=self.hierarchy_local_neighbors,
+                    backbone_max_representatives=self.backbone_max_representatives,
+                    backbone_consensus_levels=self.backbone_consensus_levels,
+                    route_resolution_weight=self.route_resolution_weight,
+                    rib_resolution_weight=self.rib_resolution_weight,
+                    rib_seed_source=self.rib_seed_source,
+                    backbone_level="auto",
                     stability_selection=False,
                 ).fit(sample)
             except (ValueError, RuntimeError, np.linalg.LinAlgError):
@@ -3004,6 +3125,7 @@ class SkeletalEmbedding:
                 self.rib_paths_ = [self.rib_paths_[index] for index in kept_indices]
                 self.rib_support_ = [self.rib_support_[index] for index in kept_indices]
                 self.rib_stability_ = [self.rib_stability_[index] for index in kept_indices]
+                self.rib_resolution_support_ = [self.rib_resolution_support_[index] for index in kept_indices]
                 self.rib_graph_ = _LandmarkGraph()
                 self.coverage_intersections_ = []
                 standardized = (original - self.mean_) / self.scale_

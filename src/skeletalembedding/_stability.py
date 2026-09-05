@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 
 Array = np.ndarray
@@ -177,3 +179,185 @@ __all__ = [
     "subsample_indices",
     "subspace_principal_angle",
 ]
+
+
+def match_junctions_across_levels(reference, candidate, *, tolerance):
+    """Match compatible degrees before assigning spatially nearby regions."""
+    hits = np.zeros(len(reference), dtype=bool)
+    pairs = sorted((float(np.linalg.norm(left.center - right.center)), i, j)
+                   for i, left in enumerate(reference) for j, right in enumerate(candidate)
+                   if left.branch_count == right.branch_count)
+    used = set()
+    for distance, i, j in pairs:
+        if distance <= tolerance and not hits[i] and j not in used:
+            hits[i] = True
+            used.add(j)
+    return hits
+
+
+def match_cycles_across_levels(reference, candidate, *, tolerance):
+    """Match geometric cycles, checking relative filtration lifetime as well."""
+    hits = np.zeros(len(reference), dtype=bool)
+    pairs = []
+    for i, left in enumerate(reference):
+        for j, right in enumerate(candidate):
+            if left.representative is None or right.representative is None:
+                continue
+            ratio = min(left.persistence, right.persistence) / max(left.persistence, right.persistence, 1e-12)
+            if ratio < 0.1:
+                continue
+            distance = route_distance(left.representative, right.representative)
+            if distance <= tolerance:
+                pairs.append((distance, i, j))
+    used = set()
+    for _, i, j in sorted(pairs):
+        if not hits[i] and j not in used:
+            hits[i] = True
+            used.add(j)
+    return hits
+
+
+def match_paths_across_levels(reference, candidate, *, tolerance,
+                              reference_descendants=None, candidate_descendants=None):
+    """One-to-one corridor matching with optional nested ancestry agreement."""
+    if reference_descendants is None or candidate_descendants is None:
+        return match_routes(reference, candidate, tolerance=tolerance)
+    hits = np.zeros(len(reference), dtype=bool)
+    pairs = []
+    for i, left in enumerate(reference):
+        for j, right in enumerate(candidate):
+            overlap = np.intersect1d(reference_descendants[i], candidate_descendants[j]).size
+            if not overlap:
+                continue
+            distance = route_distance(left, right)
+            if distance <= tolerance:
+                pairs.append((distance, -overlap, i, j))
+    used = set()
+    for _, _, i, j in sorted(pairs):
+        if not hits[i] and j not in used:
+            hits[i] = True
+            used.add(j)
+    return hits
+
+
+def corridor_recurs(entry, support):
+    """Test an ordered corridor against an independently constructed graph."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.spatial import cKDTree
+
+    support = np.asarray(support)
+    if len(support) < 2:
+        return False
+    graph = entry["graph"]
+    points = graph.points
+    tolerance = 3 * entry["scale"]
+    distances, nearest = cKDTree(points).query(support)
+    if np.quantile(distances, 0.9) > tolerance:
+        return False
+    inside = cKDTree(support).query(points)[0] <= tolerance
+    inside[nearest] = True
+    rows, columns, lengths = [], [], []
+    for (left, right), length in graph.edges.items():
+        if inside[left] and inside[right]:
+            rows.extend((left, right))
+            columns.extend((right, left))
+            lengths.extend((max(length, 1e-12),) * 2)
+    adjacency = csr_matrix((lengths, (rows, columns)), shape=(len(points), len(points)))
+    anchors = nearest[np.linspace(0, len(nearest) - 1, min(9, len(nearest)), dtype=int)]
+    path = [int(anchors[0])]
+    for start, end in itertools.pairwise(anchors):
+        if start == end:
+            continue
+        _, previous = dijkstra(adjacency, indices=int(start), return_predecessors=True)
+        segment = [int(end)]
+        while segment[-1] != start:
+            parent = int(previous[segment[-1]])
+            if parent < 0:
+                return False
+            segment.append(parent)
+        path.extend(segment[-2::-1])
+    return len(set(path)) > 1 and route_distance(support, points[path]) <= tolerance
+
+
+def path_resolution_support(model, support):
+    """Measure independent graph-corridor recurrence at tested resolutions."""
+    tested = [entry for entry in model.topology_by_level_.values() if entry["status"] == "tested"]
+    if len(tested) < 2:
+        return float("nan")
+    return float(np.mean([corridor_recurs(entry, support) for entry in tested]))
+
+
+def prepare_structural_subsamples(model, points):
+    """Collect bounded topology probes before structural selection, without MIPs."""
+    if not model.stability_selection or len(model.levels_) < 2:
+        return
+    from ._multiresolution import build_hierarchy, evaluate_level
+    for run in range(model.stability_runs):
+        seed = model.random_state + run + 1
+        indices = subsample_indices(len(points), model.stability_fraction, seed)
+        sample = jitter_points(points[indices], jitter=model.stability_jitter,
+                               local_scale=model.local_scale_, rng=np.random.default_rng(seed))
+        levels = build_hierarchy(sample, max_levels=model.hierarchy_max_levels,
+                                 target_size=model.hierarchy_target_size,
+                                 min_reduction=model.hierarchy_min_reduction,
+                                 distance_quantile=model.hierarchy_distance_quantile,
+                                 local_neighbors=model.hierarchy_local_neighbors,
+                                 representative_method=model.representative_method, random_state=seed)
+        # Match compression to the selected input size rather than growing a
+        # topology/MIP problem with the original subsample size.
+        target = model.backbone_input_size_
+        level = min(levels, key=lambda level: abs(len(level.points) - target))
+        entry = evaluate_level(model, level, -1)
+        model._structural_subsamples_.append(entry)
+
+
+def score_multiresolution_candidates(model, candidates, specifications):
+    if len(model.levels_) < 2:
+        return
+    for candidate in candidates:
+        support = model.routing_graph_.points[candidate.vertices]
+        candidate.geometry_cost = candidate.total_cost
+        for landmark in (candidate.start_landmark, candidate.end_landmark):
+            region = specifications[landmark].get("region")
+            confidence = getattr(region, "combined_confidence", float("nan"))
+            if np.isfinite(confidence):
+                candidate.total_cost += model.route_resolution_weight * (1 - confidence)
+        for cycle_index in candidate.persistent_cycle_classes:
+            confidence = getattr(model.persistent_cycles_[cycle_index], "combined_confidence", float("nan"))
+            if np.isfinite(confidence):
+                candidate.total_cost -= model.route_resolution_weight * confidence
+        candidate.resolution_support = path_resolution_support(model, support)
+        if np.isfinite(candidate.resolution_support):
+            candidate.total_cost -= model.route_resolution_weight * candidate.resolution_support
+        probes = model._structural_subsamples_
+        if probes:
+            hits = [corridor_recurs(entry, support) for entry in probes]
+            candidate.stability_support = float(np.mean(hits))
+            candidate.subsample_support = candidate.stability_support
+
+
+def structural_feature_evidence(model, cycles=None, junctions=None):
+    """Attach independent evidence before topology constraints are constructed."""
+    tested = [entry for entry in model.topology_by_level_.values() if entry["status"] == "tested"]
+    probes = model._structural_subsamples_
+    if cycles is not None:
+        matcher, field = match_cycles_across_levels, "persistent_cycles"
+        features = cycles
+    else:
+        matcher, field = match_junctions_across_levels, "junctions"
+        features = junctions
+    for i, feature in enumerate(features):
+        resolution = [matcher(features, entry[field], tolerance=4 * max(model.local_scale_, entry["scale"]))[i]
+                      for entry in tested] if len(tested) > 1 else []
+        sampling = [matcher(features, entry[field], tolerance=4 * max(model.local_scale_, entry["scale"]))[i]
+                    for entry in probes]
+        feature.resolution_support = float(np.mean(resolution)) if resolution else float("nan")
+        feature.subsample_support = float(np.mean(sampling)) if sampling else float("nan")
+        measured = [value for value in (feature.resolution_support, feature.subsample_support)
+                    if np.isfinite(value)]
+        feature.combined_confidence = float(np.prod(measured)) if measured else float("nan")
+    # Geometric cycle representatives are approximate. Do not erase mandatory
+    # topology constraints solely because that proxy did not match; confidence
+    # instead changes competing candidate costs at the selection boundary.
+    return features

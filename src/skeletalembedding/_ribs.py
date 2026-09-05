@@ -27,6 +27,11 @@ class RibCandidate:
     stability: float = 1.0
     utility: float = 0.0
     spline: Any = None
+    subsample_support: float = float("nan")
+    resolution_support: float = float("nan")
+    length: float = 0.0
+    seed_sources: tuple[str, ...] = ("residual",)
+    descendant_original_indices: Array | None = None
 
 
 def _orthogonal_direction(tangent: Array, residuals: Array) -> Array:
@@ -237,6 +242,7 @@ def select_ribs(
     rib_penalty: float,
     junction_penalty: float,
     selection: str = "greedy",
+    resolution_weight: float = 0.0,
 ) -> list[RibCandidate]:
     """Select non-overlapping useful ribs using the default greedy policy."""
     for candidate in candidates:
@@ -244,6 +250,7 @@ def select_ribs(
         candidate.utility = (
             candidate.coverage_gain
             + candidate.stability
+            + (resolution_weight * candidate.resolution_support if np.isfinite(candidate.resolution_support) else 0.0)
             - length_penalty * length
             - rib_penalty
             - junction_penalty * max(0, len(candidate.points) - 2)
@@ -285,3 +292,109 @@ def select_ribs(
 
 
 __all__ = ["RibCandidate", "propose_ribs", "select_ribs"]
+
+
+def propose_hierarchy_ribs(model, points, result, *, max_candidates):
+    """Propose unresolved fine representative paths, independently at each level."""
+    from scipy.spatial import cKDTree
+
+    from ._multiresolution import sparse_corridor_path
+    from ._stability import match_paths_across_levels
+    if len(model.levels_) < 2:
+        return []
+    errors2 = np.sum((result.unexplained_residual / model.scale_) ** 2, axis=1)
+    threshold = max(float(np.quantile(errors2, 0.6)), 1e-16)
+    by_level = []
+    last = max(1, model.selected_backbone_level_)
+    for level in model.levels_[:last + 1]:
+        error = errors2[level.representative_indices]
+        high = np.flatnonzero(error >= threshold)
+        paths = []
+        if len(high) >= 3:
+            tree = cKDTree(level.points[high])
+            spacing = tree.query(level.points[high], k=min(3, len(high)))[0][:, -1]
+            covered = set()
+            for seed in high[np.argsort(-error[high], kind="stable")]:
+                if int(seed) in covered:
+                    continue
+                seed_position = int(np.searchsorted(high, seed))
+                radius = max(4 * float(spacing[seed_position]), 1e-10)
+                local = high[tree.query_ball_point(level.points[seed], radius)]
+                if len(local) < 3:
+                    continue
+                local = np.sort(local)
+                start = int(np.searchsorted(local, seed))
+                end = int(np.argmax(np.linalg.norm(level.points[local] - level.points[seed], axis=1)))
+                path = sparse_corridor_path(level.points[local], start, end,
+                                             min(4, model.hierarchy_local_neighbors))
+                if len(path) < 3:
+                    continue
+                ids = local[path]
+                support = level.points[ids]
+                steps = np.linalg.norm(np.diff(support, axis=0), axis=1)
+                if np.any(steps > radius / 2):
+                    continue
+                covered.update(map(int, local))
+                descendants = np.unique(np.concatenate([level.descendant_indices[i] for i in ids]))
+                paths.append((support, int(level.representative_indices[seed]), descendants))
+                if len(paths) >= max_candidates:
+                    break
+        by_level.append(paths)
+    candidates = []
+    for index, paths in enumerate(by_level):
+        for support, seed, descendants in paths:
+            tested = list(range(max(0, index - 1), min(len(by_level), index + 2)))
+            hits = []
+            for other in tested:
+                tolerance = max(model.levels_[other].scale, model.levels_[index].scale,
+                                float(np.median(np.linalg.norm(np.diff(support, axis=0), axis=1)))) * 3
+                hits.append(bool(match_paths_across_levels([support], [p[0] for p in by_level[other]],
+                    tolerance=tolerance, reference_descendants=[descendants],
+                    candidate_descendants=[p[2] for p in by_level[other]])[0]))
+            resolution = float(np.mean(hits)) if len(tested) > 1 else float("nan")
+            if sum(hits) < 2:
+                continue
+            spline = _fit_curve(support, closed=False, smoothing=model.spline_smoothing,
+                                sample_count=max(64, 2 * len(support)))
+            _, _, distance2 = spline.project(points[descendants])
+            gain = float(np.maximum(errors2[descendants] - distance2, 0).sum())
+            if gain <= 0:
+                continue
+            candidate = RibCandidate(support, seed, int(result.route_id[seed]), "hierarchy", gain,
+                                      len(descendants) / len(points), spline=spline)
+            candidate.resolution_support = resolution
+            candidate.seed_sources = ("hierarchy",)
+            candidate.descendant_original_indices = descendants
+            candidates.append(candidate)
+    return candidates
+
+
+def prepare_rib_candidates(model, points, result, residual_candidates):
+    """Combine sources, score measured evidence, and deduplicate corridors."""
+    from ._stability import corridor_recurs, path_resolution_support, route_distance
+    if len(model.levels_) < 2:
+        return list(residual_candidates) if model.rib_seed_source != "hierarchy" else []
+    candidates = list(residual_candidates) if model.rib_seed_source != "hierarchy" else []
+    if model.use_multiresolution and model.rib_seed_source in {"hierarchy", "both"}:
+        candidates.extend(propose_hierarchy_ribs(model, points, result,
+            max_candidates=model.coverage_max_candidates_per_iteration))
+    for candidate in candidates:
+        candidate.length = float(np.linalg.norm(np.diff(candidate.points, axis=0), axis=1).sum())
+        if len(model.levels_) > 1 and not np.isfinite(candidate.resolution_support):
+            candidate.resolution_support = path_resolution_support(model, candidate.points)
+        if model._structural_subsamples_:
+            hits = [corridor_recurs(entry, candidate.points) for entry in model._structural_subsamples_]
+            candidate.subsample_support = float(np.mean(hits))
+            candidate.stability = candidate.subsample_support
+    unique = []
+    for candidate in sorted(candidates, key=lambda c: -c.coverage_gain):
+        match = next((other for other in unique if route_distance(candidate.points, other.points)
+                      <= max(model.local_scale_, 1e-10)), None)
+        if match is None:
+            unique.append(candidate)
+        else:
+            match.seed_sources = tuple(sorted(set(match.seed_sources + candidate.seed_sources)))
+    if len(model.levels_) > 1:
+        unique = [candidate for candidate in unique if candidate.coverage_gain > model.coverage_min_gain
+                  and (not np.isfinite(candidate.subsample_support) or candidate.subsample_support >= model.rib_min_support)]
+    return unique[:model.coverage_max_candidates_per_iteration]

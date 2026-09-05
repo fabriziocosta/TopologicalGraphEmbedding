@@ -27,6 +27,7 @@ _INTERACTIVE_NAME_SET = {"plot_spline_3d"}
 
 __all__ = [
     "MetroLayout",
+    "plot_hierarchy",
     "evaluate_route_classification",
     "evaluate_route_regression",
     "evaluate_route_target",
@@ -43,6 +44,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    if name == "plot_hierarchy":
+        from .hierarchy import plot_hierarchy
+
+        return plot_hierarchy
     if name in _PLOT_NAME_SET:
         if name in _INTERACTIVE_NAME_SET:
             from . import interactive

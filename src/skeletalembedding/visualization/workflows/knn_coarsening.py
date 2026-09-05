@@ -272,7 +272,7 @@ def _plot_splines(axis, points, model, project):
         is_rib = route_id >= backbone_count
         axis.plot(
             samples[:, 0], samples[:, 1], color=spline_colors(route_id),
-            linewidth=0.5 if is_rib else 3.0, alpha=0.92, zorder=4,
+            linewidth=1.0 if is_rib else 3.0, alpha=0.92, zorder=4,
             linestyle='-',
         )
 
@@ -280,7 +280,7 @@ def _plot_splines(axis, points, model, project):
     axis.plot([], [], color='#4c78a8', linewidth=3.0, label='backbone splines')
     if backbone_count < len(model.splines_):
         axis.plot(
-            [], [], color='#4c78a8', linewidth=0.5,
+            [], [], color='#4c78a8', linewidth=1.0,
             label='coverage ribs',
         )
     axis.legend(loc='best', fontsize=7, frameon=False)
@@ -358,9 +358,14 @@ def render_view(
     _style_axis(axes[1], display_points)
 
     _plot_splines(axes[2], points, spline_model, project)
+    total_routes = len(spline_model.splines_)
+    backbone_count = int(
+        getattr(spline_model, 'backbone_element_count_', total_routes)
+    )
+    rib_count = total_routes - backbone_count
     axes[2].set_title(
         f'{dataset_name}: fitted splines\n'
-        f'{len(spline_model.splines_)} routes ({len(spline_model.rib_paths_)} ribs)',
+        f'{total_routes} routes: {backbone_count} backbones {rib_count} ribs',
         pad=10,
     )
 

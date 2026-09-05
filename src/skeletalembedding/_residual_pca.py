@@ -133,6 +133,12 @@ def fit_residual_pca(
             model.residual_eigenvalues_.append(np.zeros((len(grid_t), 0), dtype=float))
         return
 
+    owner = None
+    if getattr(model, "selected_backbone_level_", 0) > 0:
+        owner = np.arange(len(points))
+        for level in model.levels_[:model.selected_backbone_level_]:
+            owner = level.parent_indices[owner]
+    model.residual_ancestry_partition_sizes_ = []
     residual_scaled = np.asarray(centerline_result.residual, dtype=float) / model.scale_
     frames = _normal_frames(model, centerline_result)
     for route, spline in enumerate(model.routes_):
@@ -149,9 +155,19 @@ def fit_residual_pca(
         else:
             local_coordinates = np.empty((0, max(0, dimension - 1)), dtype=float)
             local_t = np.empty(0, dtype=float)
+        blocks = []
+        if owner is not None and len(members):
+            order = np.argsort(owner[members], kind="stable")
+            boundaries = np.flatnonzero(np.diff(owner[members][order])) + 1
+            for block in np.split(order, boundaries):
+                blocks.append((block, float(np.min(local_t[block])), float(np.max(local_t[block]))))
+        model.residual_ancestry_partition_sizes_.append([len(block) for block, _, _ in blocks])
         normal_grid = model.normal_frame_grids_[route]
         for index, center in enumerate(grid_t):
-            if len(members):
+            if blocks:
+                covariance = _ancestry_covariance(local_coordinates, local_t, blocks, center,
+                                                  spline.closed, model.residual_pca_bandwidth)
+            elif len(members):
                 distances = _route_distances(local_t, center, spline.closed)
                 scaled_distance = (distances - np.min(distances)) / model.residual_pca_bandwidth
                 weights = np.exp(-0.5 * scaled_distance * scaled_distance)
@@ -236,3 +252,28 @@ def attach_residual_pca(
 
 
 __all__ = ["attach_residual_pca", "fit_residual_pca"]
+
+
+def _ancestry_covariance(coordinates, local_t, blocks, center, closed, bandwidth):
+    """Evaluate the unchanged Gaussian covariance using descendant partitions.
+
+    Only partitions whose weights necessarily underflow to zero are skipped.
+    This is exact up to floating-point summation order, including wraparound.
+    """
+    ordered = np.sort(local_t)
+    location = int(np.searchsorted(ordered, center))
+    nearest = ordered[np.array([location - 1, location]) % len(ordered)]
+    minimum = float(np.min(_route_distances(nearest, center, closed)))
+    covariance = np.zeros((coordinates.shape[1], coordinates.shape[1]))
+    total = 0.0
+    for block, left, right in blocks:
+        centers = [center - 1, center, center + 1] if closed else [center]
+        lower_bound = min(max(left - value, value - right, 0.0) for value in centers)
+        if (lower_bound - minimum) / bandwidth > 39.0:
+            continue
+        distances = _route_distances(local_t[block], center, closed)
+        weights = np.exp(-0.5 * ((distances - minimum) / bandwidth) ** 2)
+        values = coordinates[block]
+        covariance += (values * weights[:, None]).T @ values
+        total += float(np.sum(weights))
+    return covariance / max(total, 1e-12)

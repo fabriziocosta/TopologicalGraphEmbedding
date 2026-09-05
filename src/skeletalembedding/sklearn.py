@@ -84,6 +84,19 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         rib_stability_runs: int | None = None,
         rib_min_support: float = 0.6,
         stability_residual_subspaces: bool = False,
+        use_multiresolution = True,
+        hierarchy_max_levels = 8,
+        hierarchy_target_size = 1000,
+        hierarchy_min_reduction = 0.15,
+        representative_method = "medoid",
+        hierarchy_distance_quantile = 0.1,
+        hierarchy_local_neighbors = 10,
+        backbone_level: int | str = "auto",
+        backbone_max_representatives = 2000,
+        backbone_consensus_levels = 3,
+        route_resolution_weight = 0.1,
+        rib_resolution_weight = 0.1,
+        rib_seed_source = "both",
         n_jobs: int | None = None,
     ) -> None:
         self.n_centroids = n_centroids
@@ -149,6 +162,19 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
         self.rib_stability_runs = rib_stability_runs
         self.rib_min_support = rib_min_support
         self.stability_residual_subspaces = stability_residual_subspaces
+        self.use_multiresolution = use_multiresolution
+        self.hierarchy_max_levels = hierarchy_max_levels
+        self.hierarchy_target_size = hierarchy_target_size
+        self.hierarchy_min_reduction = hierarchy_min_reduction
+        self.representative_method = representative_method
+        self.hierarchy_distance_quantile = hierarchy_distance_quantile
+        self.hierarchy_local_neighbors = hierarchy_local_neighbors
+        self.backbone_level = backbone_level
+        self.backbone_max_representatives = backbone_max_representatives
+        self.backbone_consensus_levels = backbone_consensus_levels
+        self.route_resolution_weight = route_resolution_weight
+        self.rib_resolution_weight = rib_resolution_weight
+        self.rib_seed_source = rib_seed_source
         self.n_jobs = n_jobs
 
     def _new_embedding(self) -> SkeletalEmbedding:
@@ -216,6 +242,19 @@ class SkeletalEmbeddingTransformer(TransformerMixin, BaseEstimator):
             rib_stability_runs=self.rib_stability_runs,
             rib_min_support=self.rib_min_support,
             stability_residual_subspaces=self.stability_residual_subspaces,
+            use_multiresolution=self.use_multiresolution,
+            hierarchy_max_levels=self.hierarchy_max_levels,
+            hierarchy_target_size=self.hierarchy_target_size,
+            hierarchy_min_reduction=self.hierarchy_min_reduction,
+            representative_method=self.representative_method,
+            hierarchy_distance_quantile=self.hierarchy_distance_quantile,
+            hierarchy_local_neighbors=self.hierarchy_local_neighbors,
+            backbone_level=self.backbone_level,
+            backbone_max_representatives=self.backbone_max_representatives,
+            backbone_consensus_levels=self.backbone_consensus_levels,
+            route_resolution_weight=self.route_resolution_weight,
+            rib_resolution_weight=self.rib_resolution_weight,
+            rib_seed_source=self.rib_seed_source,
             n_jobs=self.n_jobs,
         )
 
@@ -360,6 +399,19 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
         rib_stability_runs: int | None = None,
         rib_min_support: float = 0.6,
         stability_residual_subspaces: bool = False,
+        use_multiresolution = True,
+        hierarchy_max_levels = 8,
+        hierarchy_target_size = 1000,
+        hierarchy_min_reduction = 0.15,
+        representative_method = "medoid",
+        hierarchy_distance_quantile = 0.1,
+        hierarchy_local_neighbors = 10,
+        backbone_level: int | str = "auto",
+        backbone_max_representatives = 2000,
+        backbone_consensus_levels = 3,
+        route_resolution_weight = 0.1,
+        rib_resolution_weight = 0.1,
+        rib_seed_source = "both",
         n_jobs: int | None = None,
     ) -> None:
         super().__init__(
@@ -426,6 +478,19 @@ class SkeletalEmbeddingClassifier(ClassifierMixin, SkeletalEmbeddingTransformer)
             rib_stability_runs=rib_stability_runs,
             rib_min_support=rib_min_support,
             stability_residual_subspaces=stability_residual_subspaces,
+            use_multiresolution=use_multiresolution,
+            hierarchy_max_levels=hierarchy_max_levels,
+            hierarchy_target_size=hierarchy_target_size,
+            hierarchy_min_reduction=hierarchy_min_reduction,
+            representative_method=representative_method,
+            hierarchy_distance_quantile=hierarchy_distance_quantile,
+            hierarchy_local_neighbors=hierarchy_local_neighbors,
+            backbone_level=backbone_level,
+            backbone_max_representatives=backbone_max_representatives,
+            backbone_consensus_levels=backbone_consensus_levels,
+            route_resolution_weight=route_resolution_weight,
+            rib_resolution_weight=rib_resolution_weight,
+            rib_seed_source=rib_seed_source,
             n_jobs=n_jobs,
         )
         self.estimator = estimator

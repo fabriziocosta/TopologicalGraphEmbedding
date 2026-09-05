@@ -23,6 +23,10 @@ class JunctionRegion:
     member_indices: list[int] = field(default_factory=list)
     arm_indices: list[np.ndarray] = field(default_factory=list)
     node_id: int | None = None
+    subsample_support: float = float("nan")
+    resolution_support: float = float("nan")
+    branch_count_by_level: dict[int, int | None] = field(default_factory=dict)
+    location_dispersion: float = float("nan")
 
 
 @dataclass
@@ -62,6 +66,13 @@ class PersistentCycle:
     persistence: float
     representative: Array | None = None
     stability_support: float = 1.0
+    subsample_support: float = float("nan")
+    resolution_support: float = float("nan")
+
+
+    @property
+    def persistence_strength(self):
+        return self.persistence
 
 
 @dataclass
@@ -85,6 +96,10 @@ class CandidatePath:
     # ``vertices``; resized edges may contain interpolated nodes that are not
     # vertices of the dense routing graph.
     support_points: Array | None = None
+    subsample_support: float = float("nan")
+    resolution_support: float = float("nan")
+    geometry_cost: float | None = None
+    descendant_original_indices: Array | None = None
 
 
 class _WeightedKNNGraph:
