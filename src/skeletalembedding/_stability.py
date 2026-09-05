@@ -173,6 +173,9 @@ def subspace_principal_angle(reference: Array, candidate: Array) -> float:
 __all__ = [
     "jitter_points",
     "match_cycles",
+    "match_cycles_across_levels",
+    "match_junctions_across_levels",
+    "match_paths_across_levels",
     "match_regions",
     "match_routes",
     "route_distance",
@@ -293,7 +296,9 @@ def prepare_structural_subsamples(model, points):
     if not model.stability_selection or len(model.levels_) < 2:
         return
     from ._multiresolution import build_hierarchy, evaluate_level
-    for run in range(model.stability_runs):
+    runs = max(model.stability_runs, model.rib_stability_runs or 0) if model.coverage_refinement else model.stability_runs
+    model.structural_subsample_failures_ = []
+    for run in range(runs):
         seed = model.random_state + run + 1
         indices = subsample_indices(len(points), model.stability_fraction, seed)
         sample = jitter_points(points[indices], jitter=model.stability_jitter,
@@ -308,7 +313,11 @@ def prepare_structural_subsamples(model, points):
         # topology/MIP problem with the original subsample size.
         target = model.backbone_input_size_
         level = min(levels, key=lambda level: abs(len(level.points) - target))
-        entry = evaluate_level(model, level, -1)
+        try:
+            entry = evaluate_level(model, level, -1)
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as error:
+            model.structural_subsample_failures_.append({"run": run, "reason": str(error)})
+            continue
         model._structural_subsamples_.append(entry)
 
 
@@ -356,6 +365,8 @@ def structural_feature_evidence(model, cycles=None, junctions=None):
         feature.subsample_support = float(np.mean(sampling)) if sampling else float("nan")
         measured = [value for value in (feature.resolution_support, feature.subsample_support)
                     if np.isfinite(value)]
+        if cycles is not None:
+            measured.append(float(1 - np.exp(-feature.persistence / max(model.persistence_threshold_, 1e-12))))
         feature.combined_confidence = float(np.prod(measured)) if measured else float("nan")
     # Geometric cycle representatives are approximate. Do not erase mandatory
     # topology constraints solely because that proxy did not match; confidence

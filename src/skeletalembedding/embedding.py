@@ -177,19 +177,19 @@ class SkeletalEmbedding:
         rib_stability_runs: int | None = None,
         rib_min_support: float = 0.6,
         stability_residual_subspaces: bool = False,
-        use_multiresolution = True,
-        hierarchy_max_levels = 8,
-        hierarchy_target_size = 1000,
-        hierarchy_min_reduction = 0.15,
-        representative_method = "medoid",
-        hierarchy_distance_quantile = 0.1,
-        hierarchy_local_neighbors = 10,
+        use_multiresolution: bool = True,
+        hierarchy_max_levels: int = 8,
+        hierarchy_target_size: int = 1000,
+        hierarchy_min_reduction: float = 0.15,
+        representative_method: str = "medoid",
+        hierarchy_distance_quantile: float = 0.1,
+        hierarchy_local_neighbors: int = 10,
         backbone_level: int | str = "auto",
-        backbone_max_representatives = 2000,
-        backbone_consensus_levels = 3,
-        route_resolution_weight = 0.1,
-        rib_resolution_weight = 0.1,
-        rib_seed_source = "both",
+        backbone_max_representatives: int = 2000,
+        backbone_consensus_levels: int = 3,
+        route_resolution_weight: float = 0.1,
+        rib_resolution_weight: float = 0.1,
+        rib_seed_source: str = "both",
         n_jobs: int | None = None,
     ) -> None:
         if n_centroids < 3:
@@ -1094,8 +1094,9 @@ class SkeletalEmbedding:
         if self.use_multiresolution and (len(self.levels_) > 1 or getattr(self, "_evaluating_hierarchy_", False)):
             # Compression must not turn an empty region into an intrinsic
             # junction merely because nearest-neighbor spacing increased.
-            junctions = [region for region in junctions
-                         if np.min(np.linalg.norm(points - region.center, axis=1)) <= self.local_scale_]
+            if central_junction_locked:
+                junctions = [region for region in junctions
+                             if np.min(np.linalg.norm(points - region.center, axis=1)) <= self.local_scale_]
             if not junctions:
                 central_junction_locked = False
                 self.central_junction_locked_ = False
@@ -1632,6 +1633,9 @@ class SkeletalEmbedding:
             ]
         candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self._tag_persistent_cycle_candidates(candidates)
+        from ._stability import score_multiresolution_candidates
+        score_multiresolution_candidates(self, candidates, specifications)
+        candidates.sort(key=lambda candidate: (candidate.total_cost, candidate.start_landmark, candidate.end_landmark))
         self.candidate_paths_ = list(candidates)
         self.candidate_path_attempts_ = candidate_attempts
 
@@ -1951,8 +1955,6 @@ class SkeletalEmbedding:
             if self.requested_cycle_count_ > 0
             else 0
         )
-        from ._stability import score_multiresolution_candidates
-        score_multiresolution_candidates(self, candidates, specifications)
         self.mip_candidate_count_ = len(candidates)
         mip_selected, mip_status = select_backbone_mip(
             candidates,
@@ -2774,6 +2776,7 @@ class SkeletalEmbedding:
                 junction_penalty=self.coverage_junction_penalty,
                 selection=self.coverage_selection,
                 resolution_weight=self.rib_resolution_weight,
+                measured_stability_only=len(self.levels_) > 1,
             )
             if not selected:
                 break

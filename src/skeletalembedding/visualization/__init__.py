@@ -27,12 +27,12 @@ _INTERACTIVE_NAME_SET = {"plot_spline_3d"}
 
 __all__ = [
     "MetroLayout",
-    "plot_hierarchy",
     "evaluate_route_classification",
     "evaluate_route_regression",
     "evaluate_route_target",
     "plot_embedding_row",
     "plot_graph_embedding",
+    "plot_hierarchy",
     "plot_labeled_graph",
     "plot_metro_graph",
     "plot_metro_lines",

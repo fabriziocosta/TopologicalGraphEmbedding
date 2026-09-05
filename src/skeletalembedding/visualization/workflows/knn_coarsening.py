@@ -80,7 +80,7 @@ def _set_dataset_size(point_fraction):
     """Regenerate the cached clouds when the point-count multiplier changes."""
     global datasets, dataset_names, knn_graph_cache, spline_model_cache
 
-    target = max(2, int(round(N_SAMPLES * float(point_fraction))))
+    target = max(2, round(N_SAMPLES * float(point_fraction)))
     current = len(next(iter(datasets.values()))) if datasets else None
     if current == target:
         return
@@ -159,6 +159,11 @@ def get_spline_embedding(
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
     backbone_simplification, n_backbone_nodes, junction_confidence=0.7,
+    use_multiresolution=True, hierarchy_max_levels=8,
+    hierarchy_target_size=1000, hierarchy_min_reduction=0.15,
+    representative_method='medoid', hierarchy_distance_quantile=0.1,
+    hierarchy_local_neighbors=10, backbone_max_representatives=2000,
+    backbone_consensus_levels=3,
 ):
     """Fit and cache the downstream topology + MIP pipeline."""
     key = (
@@ -173,6 +178,11 @@ def get_spline_embedding(
         float(backbone_simplification),
         None if n_backbone_nodes is None else int(n_backbone_nodes),
         float(junction_confidence),
+        bool(use_multiresolution), int(hierarchy_max_levels),
+        int(hierarchy_target_size), float(hierarchy_min_reduction),
+        str(representative_method), float(hierarchy_distance_quantile),
+        int(hierarchy_local_neighbors), int(backbone_max_representatives),
+        int(backbone_consensus_levels),
     )
     if key not in spline_model_cache:
         use_resistance = electrical_metric in {'effective resistance', 'edge leverage'}
@@ -211,6 +221,15 @@ def get_spline_embedding(
             stability_selection=bool(stability_selection),
             stability_runs=int(stability_runs),
             stability_fraction=float(stability_fraction),
+            use_multiresolution=bool(use_multiresolution),
+            hierarchy_max_levels=int(hierarchy_max_levels),
+            hierarchy_target_size=int(hierarchy_target_size),
+            hierarchy_min_reduction=float(hierarchy_min_reduction),
+            representative_method=str(representative_method),
+            hierarchy_distance_quantile=float(hierarchy_distance_quantile),
+            hierarchy_local_neighbors=int(hierarchy_local_neighbors),
+            backbone_max_representatives=int(backbone_max_representatives),
+            backbone_consensus_levels=int(backbone_consensus_levels),
         )
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -287,6 +306,85 @@ def _plot_splines(axis, points, model, project):
     _style_axis(axis, display_points)
 
 
+def _plot_hierarchy(axis, points, model, project, display_level=0):
+    """Show one representative level, its ancestry, and resolution evidence."""
+    levels = list(getattr(model, 'levels_', []))
+    if not levels:
+        displayed = project(points)
+        axis.scatter(
+            displayed[:, 0], displayed[:, 1], s=8, color='#4c78a8', alpha=0.75,
+        )
+        axis.set_title('MILK hierarchy unavailable')
+        _style_axis(axis, displayed)
+        return
+
+    level_index = int(np.clip(display_level, 0, len(levels) - 1))
+    level = levels[level_index]
+    displayed_points = project(points)
+    representative_points = project(level.points)
+
+    axis.scatter(
+        displayed_points[:, 0], displayed_points[:, 1], s=5,
+        color='#b8c8d3', alpha=0.35, linewidths=0, zorder=0,
+    )
+
+    # At a coarse level, connect each displayed representative to its child
+    # representatives. A deterministic cap keeps the panel responsive for
+    # dense interactive datasets while preserving the representative pattern.
+    if level_index > 0:
+        finer = levels[level_index - 1]
+        parent_indices = np.asarray(finer.parent_indices, dtype=int)
+        child_ids = np.arange(len(finer.points))
+        if len(child_ids) > 1200:
+            child_ids = np.linspace(0, len(child_ids) - 1, 1200, dtype=int)
+        ancestry_segments = []
+        for child in child_ids:
+            parent = int(parent_indices[child])
+            if 0 <= parent < len(level.points):
+                ancestry_segments.append([finer.points[child], level.points[parent]])
+        if ancestry_segments:
+            axis.add_collection(LineCollection(
+                project(np.asarray(ancestry_segments)),
+                colors='#9aaab5', linewidths=0.45, alpha=0.28, zorder=1,
+            ))
+
+    descendant_counts = np.asarray(
+        [len(descendants) for descendants in level.descendant_indices],
+        dtype=float,
+    )
+    marker_sizes = 18.0 + 14.0 * np.log1p(descendant_counts)
+    selected = level_index == int(getattr(model, 'selected_backbone_level_', -1))
+    axis.scatter(
+        representative_points[:, 0], representative_points[:, 1],
+        s=marker_sizes, c=descendant_counts, cmap='viridis',
+        alpha=0.95, edgecolors=('#d95f02' if selected else 'white'),
+        linewidths=(1.5 if selected else 0.35), zorder=3,
+    )
+
+    topology = getattr(model, 'topology_by_level_', {}).get(level_index, {})
+    cycle_count = topology.get('cycle_count', 'untested')
+    junction_count = len(topology.get('junctions', [])) if topology else '—'
+    target_size = getattr(model, 'hierarchy_target_size', '—')
+    selected_level = getattr(model, 'selected_backbone_level_', 0)
+    level_sizes = getattr(model, 'hierarchy_sizes_', [len(level.points)])
+    axis.set_title(
+        f'MILK-inspired hierarchy: level {level_index}\n'
+        f'{len(level.points)} representatives · H1 {cycle_count} · '
+        f'junctions {junction_count}',
+        pad=10,
+    )
+    axis.text(
+        0.02, 0.98,
+        f"sizes: {' → '.join(map(str, level_sizes))}\n"
+        f'target: {target_size} · selected backbone: L{selected_level}\n'
+        f'orange edge = selected level',
+        transform=axis.transAxes, va='top', ha='left', fontsize=8,
+        bbox={'facecolor': 'white', 'alpha': 0.82, 'edgecolor': 'none'},
+        zorder=5,
+    )
+    _style_axis(axis, displayed_points)
+
+
 def render_view(
     dataset_name, n_centroids, n_neighbors, mutual_knn, add_mst,
     max_cycles, spline_smoothing, persistence_max_points,
@@ -294,7 +392,11 @@ def render_view(
     coverage_refinement, coverage_tolerance, coverage_max_iterations,
     stability_selection, stability_runs, stability_fraction,
     backbone_simplification, n_backbone_nodes, num_points_fraction=1.0,
-    junction_confidence=0.7,
+    junction_confidence=0.7, use_multiresolution=True, hierarchy_max_levels=8,
+    hierarchy_target_size=1000, hierarchy_min_reduction=0.15,
+    representative_method='medoid', hierarchy_distance_quantile=0.1,
+    hierarchy_local_neighbors=10, backbone_max_representatives=2000,
+    backbone_consensus_levels=3, hierarchy_display_level=0,
 ):
     _set_dataset_size(num_points_fraction)
     points = datasets[dataset_name]
@@ -312,9 +414,13 @@ def render_view(
         stability_selection, stability_runs, stability_fraction,
         backbone_simplification, n_backbone_nodes,
         junction_confidence,
+        use_multiresolution, hierarchy_max_levels, hierarchy_target_size,
+        hierarchy_min_reduction, representative_method,
+        hierarchy_distance_quantile, hierarchy_local_neighbors,
+        backbone_max_representatives, backbone_consensus_levels,
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(21, 6), constrained_layout=True)
+    fig, axes = plt.subplots(1, 4, figsize=(28, 6), constrained_layout=True)
     fine_segments = display_points[fine_edges]
     axes[0].add_collection(LineCollection(
         fine_segments,
@@ -347,30 +453,36 @@ def render_view(
     )
     _style_axis(axes[0], display_points)
 
-    _plot_backbone(axes[1], points, spline_model, project)
+    _plot_hierarchy(
+        axes[1], points, spline_model, project, hierarchy_display_level,
+    )
+
+    _plot_backbone(axes[2], points, spline_model, project)
     mip_status = str(spline_model.mip_status_).split(':', 1)[0]
-    axes[1].set_title(
+    axes[2].set_title(
         f'{dataset_name}: fitted backbone\n'
         f'{len(spline_model.backbone_graph_.nodes)} nodes, '
-        f'{len(spline_model.backbone_graph_.edges)} edges ({mip_status})',
+        f'{len(spline_model.backbone_graph_.edges)} edges ({mip_status})\n'
+        f'level {getattr(spline_model, "selected_backbone_level_", 0)} '
+        f'of {len(getattr(spline_model, "levels_", [None])) - 1}',
         pad=10,
     )
-    _style_axis(axes[1], display_points)
+    _style_axis(axes[2], display_points)
 
-    _plot_splines(axes[2], points, spline_model, project)
+    _plot_splines(axes[3], points, spline_model, project)
     total_routes = len(spline_model.splines_)
     backbone_count = int(
         getattr(spline_model, 'backbone_element_count_', total_routes)
     )
     rib_count = total_routes - backbone_count
-    axes[2].set_title(
+    axes[3].set_title(
         f'{dataset_name}: fitted splines\n'
         f'{total_routes} routes: {backbone_count} backbones {rib_count} ribs',
         pad=10,
     )
 
     fig.suptitle(
-        'Observation graph → fitted backbone → fitted splines',
+        'Observation graph → MILK hierarchy → fitted backbone → fitted splines',
         fontsize=15,
     )
     from IPython.display import display
@@ -447,6 +559,91 @@ def display_interactive_controls(
         readout_format='.2f',
         continuous_update=False,
         description='branch sensitivity (lower = more)',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_switch = widgets.Checkbox(
+        value=True,
+        description='MILK hierarchy',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_target_slider = widgets.IntSlider(
+        value=min(1000, max(32, int(n_samples) // 4)),
+        min=16,
+        max=max(2000, int(n_samples) * 2),
+        step=16,
+        continuous_update=False,
+        description='hierarchy target size',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_levels_slider = widgets.IntSlider(
+        value=8,
+        min=0,
+        max=12,
+        step=1,
+        continuous_update=False,
+        description='hierarchy max levels',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_reduction_slider = widgets.FloatSlider(
+        value=0.15,
+        min=0.01,
+        max=0.9,
+        step=0.01,
+        readout_format='.2f',
+        continuous_update=False,
+        description='minimum reduction',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_quantile_slider = widgets.FloatSlider(
+        value=0.1,
+        min=0.01,
+        max=0.5,
+        step=0.01,
+        readout_format='.2f',
+        continuous_update=False,
+        description='local distance quantile',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_neighbors_slider = widgets.IntSlider(
+        value=10,
+        min=2,
+        max=30,
+        step=1,
+        continuous_update=False,
+        description='hierarchy local neighbors',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_representative_selector = widgets.Dropdown(
+        options=[('exact medoid', 'medoid'), ('approximate medoid', 'approx_medoid')],
+        value='medoid',
+        description='representatives',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_backbone_cap_slider = widgets.IntSlider(
+        value=2000,
+        min=32,
+        max=5000,
+        step=32,
+        continuous_update=False,
+        description='backbone representative cap',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_consensus_slider = widgets.IntSlider(
+        value=3,
+        min=1,
+        max=6,
+        step=1,
+        continuous_update=False,
+        description='stable levels to combine',
+        style={'description_width': 'initial'},
+    )
+    hierarchy_display_level_slider = widgets.IntSlider(
+        value=0,
+        min=0,
+        max=8,
+        step=1,
+        continuous_update=False,
+        description='display hierarchy level',
         style={'description_width': 'initial'},
     )
     max_cycles_slider = widgets.IntSlider(
@@ -595,9 +792,18 @@ def display_interactive_controls(
         electrical_metric_selector, electrical_weight_slider,
         max_residual_dim_slider, coverage_switch, coverage_tolerance_slider,
         coverage_iterations_slider, stability_switch, stability_runs_slider,
-        stability_fraction_slider,
+        stability_fraction_slider, hierarchy_switch, hierarchy_target_slider,
+        hierarchy_levels_slider, hierarchy_reduction_slider,
+        hierarchy_quantile_slider, hierarchy_neighbors_slider,
+        hierarchy_representative_selector, hierarchy_backbone_cap_slider,
+        hierarchy_consensus_slider, hierarchy_display_level_slider,
     ):
         control.layout = widgets.Layout(width='500px', flex='0 0 500px')
+    hierarchy_header = widgets.HTML(
+        value='<b>MILK-inspired hierarchy</b><br>'
+              '<small>Recursive local-scale grouping with medoid representatives</small>',
+        layout=widgets.Layout(width='500px', flex='0 0 500px'),
+    )
     render_status.layout = widgets.Layout(width='280px', flex='0 0 280px')
 
     controls = widgets.HBox(
@@ -611,7 +817,12 @@ def display_interactive_controls(
             electrical_metric_selector, electrical_weight_slider,
             max_residual_dim_slider, coverage_switch, coverage_tolerance_slider,
             coverage_iterations_slider, stability_switch, stability_runs_slider,
-            stability_fraction_slider,
+            stability_fraction_slider, hierarchy_header, hierarchy_switch,
+            hierarchy_target_slider, hierarchy_levels_slider,
+            hierarchy_reduction_slider, hierarchy_quantile_slider,
+            hierarchy_neighbors_slider, hierarchy_representative_selector,
+            hierarchy_backbone_cap_slider, hierarchy_consensus_slider,
+            hierarchy_display_level_slider,
             render_status,
         ],
         layout=widgets.Layout(
@@ -657,6 +868,16 @@ def display_interactive_controls(
         'stability_selection': stability_switch,
         'stability_runs': stability_runs_slider,
         'stability_fraction': stability_fraction_slider,
+        'use_multiresolution': hierarchy_switch,
+        'hierarchy_target_size': hierarchy_target_slider,
+        'hierarchy_max_levels': hierarchy_levels_slider,
+        'hierarchy_min_reduction': hierarchy_reduction_slider,
+        'hierarchy_distance_quantile': hierarchy_quantile_slider,
+        'hierarchy_local_neighbors': hierarchy_neighbors_slider,
+        'representative_method': hierarchy_representative_selector,
+        'backbone_max_representatives': hierarchy_backbone_cap_slider,
+        'backbone_consensus_levels': hierarchy_consensus_slider,
+        'hierarchy_display_level': hierarchy_display_level_slider,
     }
     output = widgets.Output()
 

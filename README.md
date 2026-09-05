@@ -61,9 +61,12 @@ route assignments or residuals learned in the original metric.
 
 ## How fitting works
 
-The estimator uses one topology-aware coarse-to-fine pipeline. The dense
-weighted observation kNN graph is treated as a routing substrate and the
-backbone is selected from explicit topology and connectivity constraints.
+SkeletalEmbedding first compresses observations into a recursive hierarchy of
+medoid representatives. Coarse levels provide evidence for global backbone
+inference; finer levels refine geometry and reveal reproducible coverage
+structure. Persistent homology, optional subsampling, and resolution stability
+remain separate diagnostics. The weighted kNN graph at the selected resolution
+provides candidate routes for the existing constrained backbone selector.
 The synthetic binary-tree example uses a cycle-free topology fit so noise
 between nearby branches is not promoted to spurious loops. The synthetic notebook runs the six easy
 examples with `persistence_max_points=60` and puts the polygon/hypercube
@@ -73,8 +76,9 @@ and Euclidean-MST augmentation are enabled by default.
 
 1. **Prepare the metric.** Features are optionally standardized. Constant
    features receive unit scale so degenerate inputs remain finite.
-2. **Build the routing substrate.** Topological mode constructs a weighted,
-   symmetric observation kNN graph with Euclidean lengths and affinity-based
+2. **Build the hierarchy and routing substrates.** Recursive local-scale
+   grouping retains medoids and their original-observation descendants.
+   Eligible levels receive a weighted, symmetric representative kNN graph with Euclidean lengths and affinity-based
    conductances. With `mutual_knn=True`, only reciprocal neighbor pairs are
    retained. With `add_mst=True`, the exact Euclidean MST is added to the
    selected kNN edges. Disconnected kNN components receive a bridge only for
@@ -82,8 +86,9 @@ and Euclidean-MST augmentation are enabled by default.
 3. **Estimate topology and local geometry.** Persistent H1 estimates the
    cycle rank. Multiscale annulus components identify junction and endpoint
    regions, while local PCA estimates ordinary tangents and one outgoing
-   direction per junction arm.
-4. **Select the backbone.** Candidate landmark routes are scored using length,
+   direction per junction arm. Match these features across hierarchy levels
+   and, when enabled, subsamples before selection.
+4. **Select the backbone.** Choose a coarse stable level band. Candidate landmark routes are scored using length,
    tangent consistency, density, and optional effective-resistance/current
    support. A small MIP selector enforces connectivity, endpoint/junction
    degrees, and the requested persistent cycle rank. If MIP is unavailable or
@@ -91,14 +96,17 @@ and Euclidean-MST augmentation are enabled by default.
 5. **Simplify the graph.** Maximal degree-2 paths are collapsed into route
    support paths. Short terminal branches may be pruned and nearby graph
    junctions may be merged before route fitting.
-6. **Fit route geometry.** Open and closed chains are represented by dense
+6. **Refine and fit route geometry.** Expand selected routes through descendant
+   corridors with ordered coarse anchors, then fit original/fine observations.
+   Open and closed chains are represented by dense
    sampled curves. SciPy smoothing splines are preferred, with a deterministic
    NumPy fallback for unsupported or numerically difficult cases.
 7. **Fit residual subspaces and ribs.** Tangent-orthogonal local PCA fields
    provide transverse coordinates. When post-PCA reconstruction error exceeds
    the requested coverage tolerance, stable high-error regions seed candidate
-   transverse or parallel ribs. Candidates are penalized for complexity and
-   selected iteratively.
+   transverse or parallel ribs. Unexplained fine-level paths provide a second
+   candidate source. Deduplicated candidates receive sampling and resolution
+   evidence, are penalized for complexity, and are selected iteratively.
 8. **Project observations.** Each observation is assigned to its closest
    sampled route. Deterministic normal frames provide stable off-route
    coordinates, including when only a subset is transformed.
@@ -111,6 +119,53 @@ independent cycle rank, not the number of geometric faces. In particular, a
 3D cube has 8 degree-3 junctions, 12 edges, 5 independent cycles, and 6 square
 faces. The latter is reported separately as `face_cycle_count_`, with the
 detected dimension in `hypercube_dimension_`.
+
+## Multiresolution controls
+
+```python
+model = SkeletalEmbedding(
+    use_multiresolution=True,
+    hierarchy_target_size=200,  # lower this to inspect small synthetic clouds
+    representative_method="medoid",  # also supports "approx_medoid"
+    backbone_level="auto",
+    rib_seed_source="both",  # "residual" or "hierarchy" are also available
+).fit(X)
+
+print(model.hierarchy_summary_)
+original_rows = model.hierarchy_descendants_[1][0]
+```
+
+Defaults are `hierarchy_max_levels=8`, `hierarchy_target_size=1000`,
+`hierarchy_min_reduction=0.15`, `hierarchy_distance_quantile=0.1`, and
+`hierarchy_local_neighbors=10`. Grouping uses normalized local kNN distances;
+representatives are actual observations, never arithmetic centroids.
+`n_centroids` remains an independent control on topology landmarks.
+
+`backbone_max_representatives=2000` is a preferred budget, and
+`backbone_consensus_levels=3` limits the adjacent consensus band. If stable
+structure requires a larger level, fitting warns and records that fallback.
+If no stable band exists, the finest evaluated level is used. Inputs already
+below the target keep level 0 only. Set `use_multiresolution=False` for the
+previous single-resolution pipeline.
+
+`cycle_resolution_support_`, `junction_resolution_support_`,
+`route_resolution_support_`, and `rib_resolution_support_` report recurrence
+across successfully tested levels. Unavailable evidence is `NaN` and makes no
+contribution to selection. `cycle_subsample_support_` is separate from both
+resolution support and filtration persistence. Resolution cost/utility weights
+are `route_resolution_weight=0.1` and `rib_resolution_weight=0.1`.
+Coverage refinement and subsampling remain disabled by default.
+
+With Matplotlib installed, `skeletalembedding.visualization.plot_hierarchy`
+shows 2D/3D representatives, ancestry, topology, and coarse/refined geometry.
+See [the torus example](examples/multiresolution_torus.py) and
+[the opt-in scaling benchmark](benchmarks/multiresolution.py).
+
+The compression stage is **MILK-inspired**, not an implementation of MILK.
+The [MILK README](https://github.com/yachielab/milk/blob/main/README.md)
+describes recursive grouping, medoid representatives, and percentile-derived
+distance thresholds. This package uses its own local kNN grouping and retains
+its existing topology, spline, residual-subspace, and rib algorithms.
 
 ## Installation
 

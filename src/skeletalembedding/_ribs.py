@@ -206,6 +206,15 @@ def propose_ribs(
             support = support[np.argsort((support - center) @ tangent, kind="mergesort")]
         else:
             support = graph.points[np.asarray(nodes, dtype=int)]
+        if graph is not None and getattr(model, "selected_backbone_level_", 0) > 0:
+            from ._multiresolution import sparse_corridor_path
+            level = model.levels_[model.selected_backbone_level_]
+            descendants = np.unique(np.concatenate([level.descendant_indices[node] for node in nodes]))
+            anchors = np.searchsorted(descendants, level.representative_indices[nodes])
+            refined = sparse_corridor_path(points[descendants], anchors[0], anchors[-1],
+                model.hierarchy_local_neighbors, waypoints=anchors, model=model)
+            if len(refined) >= 2:
+                support = points[descendants[refined]]
         support_scaled = np.asarray(support, dtype=float)
         spline = _fit_curve(
             support_scaled,
@@ -243,13 +252,18 @@ def select_ribs(
     junction_penalty: float,
     selection: str = "greedy",
     resolution_weight: float = 0.0,
+    measured_stability_only: bool = False,
 ) -> list[RibCandidate]:
     """Select non-overlapping useful ribs using the default greedy policy."""
     for candidate in candidates:
         length = float(np.sum(np.linalg.norm(np.diff(candidate.points, axis=0), axis=1)))
+        candidate.length = length
+        sampling_term = candidate.stability
+        if measured_stability_only:
+            sampling_term = candidate.subsample_support if np.isfinite(candidate.subsample_support) else 0.0
         candidate.utility = (
             candidate.coverage_gain
-            + candidate.stability
+            + sampling_term
             + (resolution_weight * candidate.resolution_support if np.isfinite(candidate.resolution_support) else 0.0)
             - length_penalty * length
             - rib_penalty

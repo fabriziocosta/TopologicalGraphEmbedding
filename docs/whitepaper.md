@@ -116,13 +116,28 @@ directions and transverse geometry.
 
 ## 3. Method overview
 
-The estimator follows a topology-aware coarse-to-fine pipeline:
+The estimator follows a topology-aware coarse-to-fine pipeline. Before routing,
+it constructs a recursive hierarchy $X_0 \to X_1 \to \cdots \to X_L$ of
+observed medoid representatives with complete original-row ancestry. Grouping
+uses local distance normalization and data-derived quantile thresholds,
+independently of topology and rib decisions. This geometric compression is
+[MILK-inspired](https://github.com/yachielab/milk/blob/main/README.md); it imports
+recursive grouping, medoids, and percentile-derived threshold ideas rather
+than claiming to reproduce MILK itself.
+
+Coarse adjacent levels supply consensus backbone evidence. Three quantities
+remain distinct: filtration persistence, random-subsample support, and
+representative-resolution support. Their combination affects structural
+selection; none substitutes for the others. An untested quantity is unavailable,
+not evidence of perfect reproducibility.
+
+The subsequent stages are:
 
 1. **Prepare the metric.** Validate the point cloud and optionally center and
    scale each feature. Constant features receive unit scale so degenerate
    inputs remain finite.
 2. **Build the routing substrate.** Construct a weighted symmetric
-   observation kNN graph. Reciprocal-neighbor filtering and Euclidean-MST
+   representative kNN graph at eligible hierarchy levels. Reciprocal-neighbor filtering and Euclidean-MST
    augmentation are enabled by default. The graph is used for local routing,
    not returned as the final skeleton.
 3. **Estimate topology and local geometry.** Use persistent H1 features as
@@ -137,12 +152,16 @@ The estimator follows a topology-aware coarse-to-fine pipeline:
    subject to connectivity, degree, and cycle constraints. A deterministic
    topology-aware selector is used when the MIP backend is unavailable or
    cannot find a feasible solution.
-6. **Fit route geometry.** Collapse maximal degree-two graph paths into route
+6. **Refine and fit route geometry.** Expand selected coarse paths through
+   descendant corridors while preserving their ordered anchors and logical
+   topology. Collapse maximal degree-two graph paths into fine/full-data route
    supports and fit smooth open or closed curves. Spline fitting is separate
    from discrete graph selection.
 7. **Model transverse variation.** Optionally fit local tangent-orthogonal
    residual-PCA fields. If the remaining reconstruction error is high,
-   candidate ribs can be added as a sparse coverage refinement.
+   residual-driven and unresolved fine-hierarchy paths seed coverage ribs.
+   Reconstruction gain, sampling support, resolution support, and complexity
+   determine selection. Fine structure does not automatically become a rib.
 8. **Project observations.** Assign every observation to its closest sampled
    route, returning route identity, normalized position, projection, tangent,
    and residual fields.

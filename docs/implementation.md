@@ -9,8 +9,8 @@ fallbacks, and implementation-specific trade-offs.
 
 The implementation uses four related graph objects:
 
-- The observation graph is a weighted, symmetrized k-nearest-neighbor graph
-  over the input observations.
+- The routing graph is a weighted, symmetrized k-nearest-neighbor graph
+  over the selected hierarchy level (original observations in single-level mode).
 - The landmark graph is built after compressing observations into at most
   `n_centroids` landmarks. It is the main graph used for route selection.
 - The backbone graph is the selected abstract graph after topology and
@@ -79,7 +79,8 @@ weights supply conductances for optional electrical diagnostics. With
 is a routing substrate, not the final manifold backbone. With `add_mst=True`,
 the exact Euclidean minimum spanning tree is added to the selected kNN edges
 before natural components are recorded. The MST pass uses linear memory but
-quadratic time in the number of observations, so it is an opt-in setting.
+quadratic time in the number of routing representatives. It remains enabled
+by default; representative compression bounds its usual input size.
 
 If the natural kNN graph is disconnected, a bridge may be added for electrical
 calculations. Route selection still keeps the original components separate.
@@ -402,3 +403,107 @@ The backbone and residual fields are approximations. Ribs provide a sparse
 geometric wire-frame for coverage; they are not evidence that the underlying
 manifold has additional persistent cycles. Metro coordinates are for display
 and are not intended to preserve distances in the original feature space.
+
+
+## Multiresolution hierarchy and integration
+
+`_multiresolution.py` builds `RepresentativeLevel` objects independently of
+persistent homology and rib selection. `levels_` and `hierarchy_levels_` alias
+the same list. Coordinates use the fitted metric. `representative_indices`
+always index original rows; `parent_indices` map each level to the next, with
+`None` at the last level. Both `descendant_indices` and the
+`descendant_original_indices` property expose the original descendants.
+`hierarchy_descendants_[level][representative]` exposes those same arrays.
+Each level partitions the original row indices, including duplicate rows.
+
+At each recursion, local scales are kth-neighbor distances. The grouping
+threshold is the configured quantile of kNN edge distances normalized by
+`sqrt(scale_i * scale_j)`. Deterministic original-index seed order prevents
+transitive flooding through a manifold. Exact duplicates are grouped together;
+isolated points remain singleton groups. Each group selects an exact blocked
+medoid or evaluates at most 64 distinct candidates in `approx_medoid` mode.
+Duplicate multiplicities remain in the distance objective. The original-row
+index breaks ties. A prospective level with insufficient reduction is not
+retained. `hierarchy_max_levels` counts compression steps after level 0.
+
+The constructor and `fit` both validate hierarchy controls. Every fit clears
+fitted state, including rib counts and hierarchy diagnostics. No required
+dependencies were added. Storage is linear in observation count per retained
+level, plus sparse neighbor queries; no global pairwise distance matrix is
+allocated by compression. Exact kNN queries can still become expensive in
+high-dimensional data. Disk-backed ancestry and approximate-neighbor backends
+are not implemented.
+
+### Topology, consensus, and selection
+
+Eligible levels use the estimator's topology-only stage: the same persistence,
+local geometry, and structural heuristics used for actual backbone fitting,
+without MIP or spline construction. `topology_by_level_` records `tested`,
+`skipped`, or `failed` status and a reason where applicable. Tested entries
+contain cycle, junction, endpoint, backend, graph, and input-size diagnostics.
+The persistent-homology point cap still applies independently.
+
+Automatic selection examines levels within the preferred size budget and one
+adjacent finer guard level. Adjacent cycle/junction agreement defines stable
+bands, with finer richer structure guarding against collapsed coarse levels.
+No consensus falls back to the finest evaluated level; preserving topology
+can exceed the preferred size budget with a warning. Integer `backbone_level`
+selects a constructed, evaluable level explicitly. `selected_backbone_level_`,
+`selected_backbone_level_band_`, and `hierarchy_summary_` explain the decision.
+
+Resolution support counts matches across successful tests, including the
+reference level. Fewer than two tests yields `NaN`; skipped/failed levels are
+not evidence against a feature. Cycle matching combines approximate geometric
+cycle representatives with relative persistence strength. Junction matching
+requires compatible branch counts before one-to-one spatial assignment.
+Path matching uses ordered graph corridors; hierarchy rib matching also uses
+ancestry overlap. These are evidence heuristics, not guarantees of homology
+class correspondence.
+
+With subsampling enabled, bounded topology probes run before multiresolution
+backbone selection. Full final route/subspace stability diagnostics remain
+available. Candidate objects retain geometry cost, subsample support, and
+resolution support separately. Measured resolution support subtracts from
+route costs and adds to rib utility; combined feature confidence adjusts
+competing route costs without replacing mandatory topology constraints.
+An unsupported empty-space junction is not accepted merely because compression
+increased the local scale. Multiple cycles on a surface can share a skeletal
+`cycle_connector` landmark, whose incidence follows existing connectivity and
+cycle-rank constraints; it is not reported as an intrinsic junction.
+
+### Fine geometry and ribs
+
+Selected paths expand down ancestry corridors, retaining ordered coarse
+observation anchors at every step. Local sparse routing uses length, tangent,
+and density costs. A disconnected corridor is widened once; persistent
+failure retains the preceding geometry and is listed in
+`route_refinement_failures_`. The MIP is not repeated during refinement.
+Coarse and original vertex IDs are never interchanged. Shared endpoint anchors,
+logical connectivity, and cycle rank remain fixed during refinement.
+
+Fine/original support drives final splines. Residual-PCA covariance is computed
+through descendant partitions with the existing Gaussian weighting. Only
+partitions whose weights necessarily underflow to zero may be skipped;
+closed-route wrapping and all nonzero weighted observations are retained.
+Residual rank, bandwidth, spline smoothing, and subspace smoothing are unchanged.
+
+Hierarchy rib proposals follow connected high-error representative paths and
+require recurrence at adjacent levels. `rib_seed_source` chooses residual,
+hierarchy, or both proposal sources. Candidates retain source provenance and
+are deduplicated by corridor before the existing greedy/MIP rib selection.
+Hierarchy candidates need positive reconstruction gain; available subsample
+support must meet the existing rib support threshold. Final selected rib
+resolution scores remain aligned after stability pruning.
+
+`route_descendant_support_` reports unique original counts, dataset fractions,
+and count per unit route length, not probabilities. Junction regions and
+consensus records add `resolution_support`, `branch_count_by_level`, and RMS
+`location_dispersion` in fitting coordinates. `topology_input_sizes_`,
+`backbone_input_size_`, and `mip_candidate_count_` expose expensive-stage sizes.
+
+`examples/multiresolution_torus.py` uses an explicit PH threshold suited to the
+minor torus hole, selects two coarse cycles, refines them, and adds coverage
+ribs with rank-one residual fields. `benchmarks/multiresolution.py` accepts
+10,000, 100,000, and 1,000,000 observations. Its optional coarse PH/MIP probe
+is skipped when the hierarchy remains above 1,000 representatives. The
+8-level default is a stopping budget, not a guarantee of reaching target size.

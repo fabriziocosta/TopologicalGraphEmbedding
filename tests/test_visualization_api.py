@@ -251,3 +251,39 @@ def test_high_dimensional_backbone_does_not_drop_the_detected_junction():
     assert len(model.landmark_graph_._components()) == 1
     assert all(value == 0 for value in model.junction_degree_shortfall_.values())
     assert np.all(result.route_id >= 0)
+
+
+def test_interactive_hierarchy_panel_shows_ancestry_and_level_summary(monkeypatch):
+    from skeletalembedding.visualization.workflows import knn_coarsening as workflow
+
+    displayed = []
+    monkeypatch.setattr('IPython.display.display', displayed.append)
+    monkeypatch.setattr(workflow, 'N_SAMPLES', 80)
+    monkeypatch.setattr(workflow, 'DATASET_NOISE', 0.02)
+    monkeypatch.setattr(workflow, 'RANDOM_STATE', 1)
+    monkeypatch.setattr(workflow, 'datasets', workflow.build_datasets(80, 0.02, 1))
+    monkeypatch.setattr(workflow, 'dataset_names', list(workflow.datasets))
+    monkeypatch.setattr(workflow, 'knn_graph_cache', {})
+    monkeypatch.setattr(workflow, 'spline_model_cache', {})
+
+    workflow.render_view(
+        dataset_name='circle', n_centroids=12, n_neighbors=6,
+        mutual_knn=False, add_mst=False, max_cycles=2,
+        spline_smoothing=0.02, persistence_max_points=40,
+        electrical_metric='none', electrical_weight=0.0, max_residual_dim=0,
+        coverage_refinement=False, coverage_tolerance=None,
+        coverage_max_iterations=1, stability_selection=False,
+        stability_runs=1, stability_fraction=0.7, backbone_simplification=0.0,
+        n_backbone_nodes=0, num_points_fraction=1.0, junction_confidence=0.7,
+        use_multiresolution=True, hierarchy_max_levels=4,
+        hierarchy_target_size=20, hierarchy_min_reduction=0.15,
+        representative_method='medoid', hierarchy_distance_quantile=0.1,
+        hierarchy_local_neighbors=6, backbone_max_representatives=100,
+        backbone_consensus_levels=2, hierarchy_display_level=2,
+    )
+
+    figure = displayed[-1]
+    assert len(figure.axes) == 4
+    assert figure.axes[1].get_title().startswith('MILK-inspired hierarchy')
+    assert any('selected backbone' in text.get_text() for text in figure.axes[1].texts)
+    plt.close(figure)
